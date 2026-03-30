@@ -25,7 +25,7 @@ interface FieldDef {
   name: string;
   label: string;
   placeholder?: string;
-  type?: 'text' | 'number' | 'select' | 'textarea';
+  type?: 'text' | 'number' | 'select' | 'textarea' | 'claimers';
   options?: { label: string; value: string }[];
   hint?: string;
 }
@@ -148,10 +148,9 @@ const ADMIN_FUNCTIONS: FunctionDef[] = [
       },
       {
         name: 'claimers_json',
-        label: 'Claimers (JSON array)',
-        type: 'textarea',
-        placeholder: '[{"address":"<pubkey>","bps":5000},{"address":"<pubkey>","bps":5000}]',
-        hint: 'JSON array of {address, bps} objects. BPS must sum to 10000.',
+        label: 'Claimers',
+        type: 'claimers',
+        hint: 'Total BPS must sum to 10,000.',
       },
     ],
     submitLabel: 'Set Pool Claimers',
@@ -165,10 +164,9 @@ const ADMIN_FUNCTIONS: FunctionDef[] = [
       { name: 'pool_address', label: 'Pool Address', placeholder: 'Pool pubkey (DBC or DAMM v2)' },
       {
         name: 'claimers_json',
-        label: 'Claimers (JSON array)',
-        type: 'textarea',
-        placeholder: '[{"address":"<pubkey>","bps":7000},{"address":"<pubkey>","bps":3000}]',
-        hint: 'JSON array of {address, bps} objects. BPS must sum to 10000.',
+        label: 'Claimers',
+        type: 'claimers',
+        hint: 'Total BPS must sum to 10,000.',
       },
     ],
     submitLabel: 'Update BPS',
@@ -195,6 +193,127 @@ function formatResult(data: unknown): string {
   return JSON.stringify(data, null, 2);
 }
 
+// ─── Claimers Input ──────────────────────────────────────────────────────────
+
+interface ClaimerRow {
+  address: string;
+  bps: string;
+}
+
+function ClaimersInput({
+  value,
+  onChange,
+  accent,
+}: {
+  value: string;
+  onChange: (json: string) => void;
+  accent: string;
+}) {
+  const parseRows = (json: string): ClaimerRow[] => {
+    try {
+      const arr = JSON.parse(json);
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.map((c: { address?: string; bps?: number }) => ({
+          address: c.address ?? '',
+          bps: c.bps != null ? String(c.bps) : '',
+        }));
+      }
+    } catch { /* ignore */ }
+    return [{ address: '', bps: '' }];
+  };
+
+  const [rows, setRows] = useState<ClaimerRow[]>(() => parseRows(value));
+
+  const syncToParent = (updated: ClaimerRow[]) => {
+    const arr = updated
+      .filter(r => r.address.trim() !== '' || r.bps.trim() !== '')
+      .map(r => ({ address: r.address.trim(), bps: Number(r.bps) || 0 }));
+    onChange(JSON.stringify(arr));
+  };
+
+  const updateRow = (idx: number, key: keyof ClaimerRow, val: string) => {
+    const updated = rows.map((r, i) => (i === idx ? { ...r, [key]: val } : r));
+    setRows(updated);
+    syncToParent(updated);
+  };
+
+  const addRow = () => {
+    const updated = [...rows, { address: '', bps: '' }];
+    setRows(updated);
+  };
+
+  const removeRow = (idx: number) => {
+    if (rows.length <= 1) return;
+    const updated = rows.filter((_, i) => i !== idx);
+    setRows(updated);
+    syncToParent(updated);
+  };
+
+  const totalBps = rows.reduce((sum, r) => sum + (Number(r.bps) || 0), 0);
+  const isValid = totalBps === 10000;
+
+  return (
+    <div className="sm:col-span-2 space-y-2">
+      {rows.map((row, idx) => (
+        <div key={idx} className="flex items-center gap-2">
+          <div className="flex-1">
+            {idx === 0 && <label className="block text-xs font-medium text-slate-300 mb-1">Address</label>}
+            <input
+              type="text"
+              placeholder="Claimer pubkey"
+              value={row.address}
+              onChange={e => updateRow(idx, 'address', e.target.value)}
+              className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600"
+              style={{ background: '#161626', border: '1px solid #2a2a40' }}
+            />
+          </div>
+          <div className="w-28">
+            {idx === 0 && <label className="block text-xs font-medium text-slate-300 mb-1">BPS</label>}
+            <input
+              type="number"
+              placeholder="5000"
+              value={row.bps}
+              onChange={e => updateRow(idx, 'bps', e.target.value)}
+              className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600"
+              style={{ background: '#161626', border: '1px solid #2a2a40' }}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => removeRow(idx)}
+            disabled={rows.length <= 1}
+            className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm text-slate-500 hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            style={{ background: '#161626', border: '1px solid #2a2a40', marginTop: idx === 0 ? '20px' : '0' }}
+          >
+            &times;
+          </button>
+        </div>
+      ))}
+
+      <div className="flex items-center justify-between pt-1">
+        <button
+          type="button"
+          onClick={addRow}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+          style={{ background: accent + '18', color: accent, border: `1px solid ${accent}44` }}
+        >
+          + Add More Claimers
+        </button>
+        <span
+          className="text-xs font-mono font-semibold px-2 py-1 rounded-lg"
+          style={{
+            background: isValid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            color: isValid ? '#4ade80' : '#f87171',
+            border: `1px solid ${isValid ? '#16a34a44' : '#dc262644'}`,
+          }}
+        >
+          {totalBps.toLocaleString()} / 10,000 BPS
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Accordion Item ───────────────────────────────────────────────────────────
 
 function AccordionItem({
@@ -213,7 +332,7 @@ function AccordionItem({
 
   const { connection } = useConnection();
   const anchorWallet = useAnchorWallet();
-  const { publicKey, connected } = useWallet();
+  const { publicKey, connected, sendTransaction } = useWallet();
   const { setVisible } = useWalletModal();
 
   const style = SECTION_STYLE[section];
@@ -265,6 +384,7 @@ function AccordionItem({
         const r = await claimDbcPartnerFee(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           network: net,
+          sendTransaction,
         });
         data = { tx: r.tx, solscan: r.link };
       } else if (fn.id === 'claim_dammv2_fee') {
@@ -325,6 +445,7 @@ function AccordionItem({
       const isRejection =
         msg.toLowerCase().includes('user rejected') ||
         msg.toLowerCase().includes('rejected the request') ||
+        msg.toLowerCase().includes('not been authorized by the user') ||
         msg.toLowerCase().includes('transaction cancelled') ||
         msg.toLowerCase().includes('transaction canceled') ||
         (err as { code?: number })?.code === 4001;
@@ -404,7 +525,15 @@ function AccordionItem({
           {/* Fields */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {fn.fields.map(field => (
-              <div key={field.name} className={field.type === 'textarea' ? 'sm:col-span-2' : ''}>
+              <div key={field.name} className={field.type === 'textarea' || field.type === 'claimers' ? 'sm:col-span-2' : ''}>
+                {field.type === 'claimers' ? (
+                  <ClaimersInput
+                    value={values[field.name] ?? '[]'}
+                    onChange={v => setValues(prev => ({ ...prev, [field.name]: v }))}
+                    accent={style.accent}
+                  />
+                ) : (
+                <>
                 <label className="block text-xs font-medium text-slate-300 mb-1">
                   {field.label}
                 </label>
@@ -440,6 +569,8 @@ function AccordionItem({
                 )}
                 {field.hint && (
                   <p className="mt-1 text-xs text-slate-500">{field.hint}</p>
+                )}
+                </>
                 )}
               </div>
             ))}

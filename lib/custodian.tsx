@@ -6,7 +6,7 @@ if (typeof globalThis !== 'undefined' && !('Buffer' in globalThis)) {
   (globalThis as { Buffer?: typeof NodeBuffer }).Buffer = NodeBuffer;
 }
 
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
@@ -507,47 +507,162 @@ export async function claimDbcPartnerFee(
   params: {
     poolAddress: string;
     network: 'devnet' | 'mainnet';
+    sendTransaction?: (
+      tx: Transaction,
+      connection: Connection,
+      options?: { skipPreflight?: boolean; maxRetries?: number },
+    ) => Promise<string>;
   },
 ): Promise<{ tx: string; link: string }> {
-  const program = createProgram(wallet, connection);
-  const client = new DynamicBondingCurveClient(connection, 'confirmed');
-  const pool = new PublicKey(params.poolAddress);
+  try {
+    console.log('[claimDbcPartnerFee] start', {
+      poolAddress: params.poolAddress,
+      network: params.network,
+      wallet: wallet.publicKey.toBase58(),
+    });
 
-  const dbcPoolState = await client.state.getPool(pool);
-  const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
-  const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(
-    pool,
-    dbcPoolState.baseMint,
-    WSOL_MINT,
-  );
-  const feeClaimerPda = deriveFeeClaimerPda();
+    const program = createProgram(wallet, connection);
+    const client = new DynamicBondingCurveClient(connection, 'confirmed');
+    const pool = new PublicKey(params.poolAddress);
 
-  const sig: string = await programMethods(program)
-    .claimPartnerTradingFee(
-      new BN('18446744073709551615'),
-      new BN('18446744073709551615'),
-    )
-    .accounts({
-      poolAuthority: dbcPoolAuthority,
-      config: dbcPoolState.config,
+    const poolAccountInfo = await connection.getAccountInfo(pool, 'confirmed');
+    if (!poolAccountInfo) {
+      throw new Error(`Pool account not found: ${pool.toBase58()}`);
+    }
+    if (!poolAccountInfo.owner.equals(DBC_PROGRAM_ID)) {
+      throw new Error(
+        [
+          'Invalid pool address for DBC.',
+          `Expected owner ${DBC_PROGRAM_ID.toBase58()} but got ${poolAccountInfo.owner.toBase58()}.`,
+          `Pool: ${pool.toBase58()}`,
+          `Network: ${params.network}`,
+          'This usually means you pasted a non-DBC pool (e.g. cp_amm pool), or the pool is on a different cluster (mainnet vs devnet).',
+        ].join(' '),
+      );
+    }
+
+    let dbcPoolState: Awaited<ReturnType<typeof client.state.getPool>>;
+    try {
+      dbcPoolState = await client.state.getPool(pool);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        [
+          `Failed to decode DBC pool account (${pool.toBase58()}).`,
+          `Underlying error: ${msg}`,
+          `Owner: ${poolAccountInfo.owner.toBase58()}`,
+          `Data length: ${poolAccountInfo.data.length}`,
+          'If you see "Invalid account discriminator", the pool address is not a DBC pool account for this SDK/program version.',
+        ].join(' '),
+      );
+    }
+    const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
+    const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(
       pool,
-      poolClaimers: poolClaimersPdaPubKey,
-      baseFeeVault,
-      quoteFeeVault,
-      basePoolVault: dbcPoolState.baseVault,
-      quotePoolVault: dbcPoolState.quoteVault,
-      baseMint: dbcPoolState.baseMint,
-      quoteMint: WSOL_MINT,
-      feeClaimer: feeClaimerPda,
-      tokenBaseProgram: TOKEN_2022_PROGRAM_ID,
-      tokenQuoteProgram: TOKEN_PROGRAM_ID,
-      eventAuthority: dbcEventAuthority,
-      dbcProgram: DBC_PROGRAM_ID,
-      payer: wallet.publicKey,
-    })
-    .rpc();
+      dbcPoolState.baseMint,
+      WSOL_MINT,
+    );
+    const feeClaimerPda = deriveFeeClaimerPda();
 
-  return { tx: sig, link: solscanLink(sig, params.network) };
+    const builder = programMethods(program)
+      .claimPartnerTradingFee(
+        new BN('18446744073709551615'),
+        new BN('18446744073709551615'),
+      )
+      .accounts({
+        poolAuthority: dbcPoolAuthority,
+        config: dbcPoolState.config,
+        pool,
+        poolClaimers: poolClaimersPdaPubKey,
+        baseFeeVault,
+        quoteFeeVault,
+        basePoolVault: dbcPoolState.baseVault,
+        quotePoolVault: dbcPoolState.quoteVault,
+        baseMint: dbcPoolState.baseMint,
+        quoteMint: WSOL_MINT,
+        feeClaimer: feeClaimerPda,
+        tokenBaseProgram: TOKEN_2022_PROGRAM_ID,
+        tokenQuoteProgram: TOKEN_PROGRAM_ID,
+        eventAuthority: dbcEventAuthority,
+        dbcProgram: DBC_PROGRAM_ID,
+        payer: wallet.publicKey,
+        systemProgram: SystemProgram.programId,
+      });
+
+    console.log('[claimDbcPartnerFee] accounts prepared', {
+      pool: pool.toBase58(),
+      poolClaimers: poolClaimersPdaPubKey.toBase58(),
+      baseFeeVault: baseFeeVault.toBase58(),
+      quoteFeeVault: quoteFeeVault.toBase58(),
+      feeClaimer: feeClaimerPda.toBase58(),
+    });
+
+    const tx = await builder.transaction();
+    console.log('[claimDbcPartnerFee] transaction built', {
+      instructions: tx.instructions.length,
+      feePayer: tx.feePayer?.toBase58() ?? null,
+    });
+
+    try {
+      const sim = await builder.simulate();
+      console.log('[claimDbcPartnerFee] simulate ok', {
+        hasLogs: Boolean(sim.raw?.logs?.length),
+      });
+    } catch (simError) {
+      console.error('[claimDbcPartnerFee] simulate failed', simError);
+    }
+
+    console.log('[claimDbcPartnerFee] sending tx (wallet prompt expected)');
+    let sig: string;
+    try {
+      const latest = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = latest.blockhash;
+      tx.feePayer = wallet.publicKey;
+
+      if (params.sendTransaction) {
+        // Prefer wallet-adapter send path for standard-wallet compatibility.
+        sig = await params.sendTransaction(tx, connection, {
+          skipPreflight: false,
+          maxRetries: 3,
+        });
+      } else {
+        const signedTx = await wallet.signTransaction(tx);
+        sig = await connection.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight: false,
+          maxRetries: 3,
+        });
+      }
+      await connection.confirmTransaction(
+        {
+          signature: sig,
+          blockhash: latest.blockhash,
+          lastValidBlockHeight: latest.lastValidBlockHeight,
+        },
+        'confirmed',
+      );
+    } catch (rpcError) {
+      const e = rpcError as {
+        name?: string;
+        message?: string;
+        code?: string | number;
+        cause?: unknown;
+      };
+      console.error('[claimDbcPartnerFee] tx failed at wallet/sign/send', {
+        name: e?.name,
+        message: e?.message,
+        code: e?.code,
+        cause: e?.cause,
+      });
+      throw new Error(
+        `claimDbcPartnerFee wallet/tx failed: ${e?.name ?? 'UnknownError'}: ${e?.message ?? 'No message'}`,
+      );
+    }
+    console.log('[claimDbcPartnerFee] rpc success', { sig });
+    return { tx: sig, link: solscanLink(sig, params.network) };
+  } catch (error) {
+    console.error('[claimDbcPartnerFee] failed before/at rpc', error);
+    throw error;
+  }
 }
 
 // ─── Non-Admin: Claim DAMM v2 Position Fee ────────────────────────────────────

@@ -10,7 +10,6 @@ if (typeof globalThis !== 'undefined' && !('Buffer' in globalThis)) {
 import { ReactNode, useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
-import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
 import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
 import { BackpackWalletAdapter } from '@solana/wallet-adapter-backpack';
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -30,7 +29,6 @@ export function getRpcEndpoint(network: 'devnet' | 'mainnet'): string {
 export function Providers({ children, endpoint = DEFAULT_DEVNET }: { children: ReactNode; endpoint?: string }) {
   const wallets = useMemo(
     () => [
-      new PhantomWalletAdapter(),
       new SolflareWalletAdapter(),
       new BackpackWalletAdapter(),
     ],
