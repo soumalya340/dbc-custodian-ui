@@ -6,9 +6,6 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Providers, getRpcEndpoint } from '@/app/providers';
 import {
   viewPoolClaimers,
-  viewDbcPool,
-  viewDammV2Pool,
-  viewDammV2Position,
   viewFeeVaultBalances,
   setPoolClaimers,
   updateClaimersBps,
@@ -46,42 +43,12 @@ const VIEW_FUNCTIONS: FunctionDef[] = [
   {
     id: 'view_pool_claimers',
     number: '1A',
-    title: 'View Pool Claimers',
+    title: 'View Pool Info',
     description: 'Fetch the on-chain PoolClaimers PDA for a given pool — claimers list, BPS splits, claimed amounts, and timestamps.',
     fields: [
       { name: 'pool_address', label: 'Pool Address', placeholder: 'Pool pubkey (DBC or DAMM v2)' },
     ],
     submitLabel: 'Fetch Pool Claimers',
-  },
-  {
-    id: 'view_dbc_pool',
-    number: '1B',
-    title: 'View DBC Pool State',
-    description: 'Fetch live state of a DBC pool — config, mints, and vaults.',
-    fields: [
-      { name: 'pool_address', label: 'DBC Pool Address', placeholder: 'DBC pool pubkey' },
-    ],
-    submitLabel: 'Fetch DBC Pool',
-  },
-  {
-    id: 'view_dammv2_pool',
-    number: '1C',
-    title: 'View DAMM v2 Pool State',
-    description: 'Fetch live state of a DAMM v2 (cp-amm) pool — mints, vaults, and token flags.',
-    fields: [
-      { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
-    ],
-    submitLabel: 'Fetch DAMM v2 Pool',
-  },
-  {
-    id: 'view_dammv2_position',
-    number: '1D',
-    title: 'View DAMM v2 Position',
-    description: 'Resolve all info from a DAMM v2 position NFT mint — pool, position PDA, and unclaimed fees.',
-    fields: [
-      { name: 'nft_mint', label: 'Position NFT Mint', placeholder: 'Position NFT mint pubkey' },
-    ],
-    submitLabel: 'Fetch Position',
   },
   {
     id: 'view_fee_vaults',
@@ -247,12 +214,6 @@ function AccordionItem({
       // ── View ──
       if (fn.id === 'view_pool_claimers') {
         data = await viewPoolClaimers(connection, values.pool_address);
-      } else if (fn.id === 'view_dbc_pool') {
-        data = await viewDbcPool(connection, values.pool_address);
-      } else if (fn.id === 'view_dammv2_pool') {
-        data = await viewDammV2Pool(connection, values.pool_address);
-      } else if (fn.id === 'view_dammv2_position') {
-        data = await viewDammV2Position(connection, values.nft_mint);
       } else if (fn.id === 'view_fee_vaults') {
         data = await viewFeeVaultBalances(connection, values.pool_address, values.base_mint, values.quote_mint);
       }
