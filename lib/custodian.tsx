@@ -41,12 +41,7 @@ export const WSOL_MINT = new PublicKey(
   'So11111111111111111111111111111111111111112',
 );
 
-// ─── Solscan helper ──────────────────────────────────────────────────────────
-
-function solscanLink(sig: string, network: 'devnet' | 'mainnet'): string {
-  const cluster = network === 'devnet' ? '?cluster=devnet' : '';
-  return `https://solscan.io/tx/${sig}${cluster}`;
-}
+import { solscanLink } from './solscanLink';
 
 // ─── PDA helpers ─────────────────────────────────────────────────────────────
 

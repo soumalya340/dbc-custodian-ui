@@ -14,6 +14,7 @@ import {
   claimDammV2PositionFee,
   distributeFees,
 } from '@/lib/custodian';
+import { createConfigAndPool } from '@/lib/createConfigAndPool';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -75,8 +76,21 @@ const VIEW_FUNCTIONS: FunctionDef[] = [
 
 const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
   {
-    id: 'claim_dbc_fee',
+    id: 'create_config_and_pool',
     number: '2A',
+    title: 'Create Config & Pool',
+    description: 'Creates a new DBC config and pool in a single transaction. Generates config and base mint keypairs automatically.',
+    fields: [
+      { name: 'migration_quote_threshold', label: 'Migration Quote Threshold (SOL)', type: 'number', placeholder: '0.15' },
+      { name: 'token_name', label: 'Token Name', placeholder: 'e.g. MyToken' },
+      { name: 'token_symbol', label: 'Token Symbol', placeholder: 'e.g. MTK' },
+      { name: 'token_uri', label: 'Token URI', placeholder: 'https://...' },
+    ],
+    submitLabel: 'Create Config & Pool',
+  },
+  {
+    id: 'claim_dbc_fee',
+    number: '2B',
     title: 'Claim DBC Partner Trading Fee',
     description: "Permissionless — sweeps all accrued partner trading fees from a DBC pool into this program's PDA-owned fee vaults. Anyone can call this.",
     fields: [
@@ -86,7 +100,7 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
   },
   {
     id: 'claim_dammv2_fee',
-    number: '2B',
+    number: '2C',
     title: 'Claim DAMM v2 Position Fee',
     description: "Claims accumulated LP position fees from a DAMM v2 pool into this program's fee vaults. Pass the position NFT mint — everything else is resolved on-chain.",
     fields: [
@@ -96,7 +110,7 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
   },
   {
     id: 'distribute_fees',
-    number: '2C',
+    number: '2D',
     title: 'Distribute Fees',
     description: 'Distributes accumulated fee vault balances proportionally to all registered claimers (based on BPS). Creates claimer ATAs if needed (first tx), then distributes (second tx).',
     fields: [
@@ -172,7 +186,7 @@ const SECTION_STYLE: Record<SectionId, { badge: string; accent: string; glow: st
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const REQUIRES_WALLET = new Set([
-  'claim_dbc_fee', 'claim_dammv2_fee', 'distribute_fees',
+  'create_config_and_pool', 'claim_dbc_fee', 'claim_dammv2_fee', 'distribute_fees',
   'set_pool_claimers', 'update_claimers_bps',
 ]);
 
@@ -230,7 +244,22 @@ function AccordionItem({
       }
 
       // ── Non-Admin ──
-      else if (fn.id === 'claim_dbc_fee') {
+      else if (fn.id === 'create_config_and_pool') {
+        const r = await createConfigAndPool(connection, anchorWallet!, {
+          migrationQuoteThreshold: Number(values.migration_quote_threshold),
+          name: values.token_name,
+          symbol: values.token_symbol,
+          uri: values.token_uri,
+          network: net,
+        });
+        data = {
+          tx: r.tx,
+          configAddress: r.configAddress,
+          poolAddress: r.poolAddress,
+          baseMint: r.baseMint,
+          solscan: r.link,
+        };
+      } else if (fn.id === 'claim_dbc_fee') {
         const r = await claimDbcPartnerFee(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           network: net,
