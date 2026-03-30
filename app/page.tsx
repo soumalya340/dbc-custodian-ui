@@ -7,6 +7,7 @@ import { Providers, getRpcEndpoint } from '@/app/providers';
 import {
   viewPoolClaimers,
   viewFeeVaultBalances,
+  viewVaultAllTokenInfo,
   setPoolClaimers,
   updateClaimersBps,
   claimDbcPartnerFee,
@@ -61,6 +62,14 @@ const VIEW_FUNCTIONS: FunctionDef[] = [
       { name: 'quote_mint', label: 'Quote Mint', placeholder: 'Quote token mint pubkey (wSOL for DBC)' },
     ],
     submitLabel: 'Fetch Fee Vaults',
+  },
+  {
+    id: 'view_vault_all_token_info',
+    number: '1C',
+    title: 'Vault All Token Info',
+    description: 'Derive the vault pubkey and fetch all DAMM v2 position NFTs currently held by that vault, including pool/token info and unclaimed fees.',
+    fields: [],
+    submitLabel: 'Fetch Vault Token Info',
   },
 ];
 
@@ -216,6 +225,8 @@ function AccordionItem({
         data = await viewPoolClaimers(connection, values.pool_address);
       } else if (fn.id === 'view_fee_vaults') {
         data = await viewFeeVaultBalances(connection, values.pool_address, values.base_mint, values.quote_mint);
+      } else if (fn.id === 'view_vault_all_token_info') {
+        data = await viewVaultAllTokenInfo(connection);
       }
 
       // ── Non-Admin ──

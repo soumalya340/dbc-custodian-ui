@@ -12,6 +12,7 @@ import {
   TOKEN_2022_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction,
+  getTokenMetadata,
 } from '@solana/spl-token';
 import { AnchorProvider, Program, BN } from '@coral-xyz/anchor';
 import type { AnchorWallet } from '@solana/wallet-adapter-react';
@@ -284,6 +285,155 @@ export async function viewFeeVaultBalances(
     quoteFeeVault: quoteFeeVault.toBase58(),
     baseBalance,
     quoteBalance,
+  };
+}
+
+// ─── View: Vault All Token Info (DAMM v2 positions) ──────────────────────────
+
+interface VaultPositionInfo {
+  pool: string;
+  position: string;
+  positionNftAccount: string;
+  positionNftMint: string;
+  tokenAMint: string;
+  tokenAName: string;
+  tokenASymbol: string;
+  tokenBMint: string;
+  tokenBName: string;
+  tokenBSymbol: string;
+  unclaimedFeeA: string;
+  unclaimedFeeB: string;
+}
+
+interface VaultPositionInfoBase {
+  pool: string;
+  position: string;
+  positionNftAccount: string;
+  positionNftMint: string;
+  tokenAMint: string;
+  tokenBMint: string;
+  unclaimedFeeA: string;
+  unclaimedFeeB: string;
+}
+
+interface TokenDisplayInfo {
+  name: string;
+  symbol: string;
+}
+
+function isLikelyPositionNftAccount(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  account: any,
+): boolean {
+  const tokenAmount = account?.data?.parsed?.info?.tokenAmount;
+  if (!tokenAmount) return false;
+  return tokenAmount.decimals === 0 && tokenAmount.amount === '1';
+}
+
+async function getTokenDisplayInfo(
+  connection: Connection,
+  mint: PublicKey,
+): Promise<TokenDisplayInfo> {
+  if (mint.equals(WSOL_MINT)) {
+    return { name: 'Solana', symbol: 'SOL' };
+  }
+
+  const mintAccountInfo = await connection.getAccountInfo(mint);
+  const ownerProgram = mintAccountInfo?.owner;
+  const isToken22 = ownerProgram?.equals(TOKEN_2022_PROGRAM_ID) ?? false;
+
+  if (isToken22) {
+    try {
+      const meta = await getTokenMetadata(connection, mint);
+      if (meta) {
+        return {
+          name: (meta.name ?? 'Unknown').trim() || 'Unknown',
+          symbol: (meta.symbol ?? '???').trim() || '???',
+        };
+      }
+    } catch {
+      // Continue to generic fallback below.
+    }
+  }
+
+  return { name: 'Unknown', symbol: '???' };
+}
+
+export async function viewVaultAllTokenInfo(connection: Connection): Promise<{
+  vaultPubkey: string;
+  totalPositions: number;
+  positions: VaultPositionInfo[];
+}> {
+  const cpAmm = new CpAmm(connection);
+  const vault = deriveFeeClaimerPda();
+
+  const [legacyTokenAccounts, token2022Accounts] = await Promise.all([
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_PROGRAM_ID }),
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_2022_PROGRAM_ID }),
+  ]);
+
+  const allTokenAccounts = [...legacyTokenAccounts.value, ...token2022Accounts.value];
+  const nftCandidates = allTokenAccounts.filter((acc) => isLikelyPositionNftAccount(acc.account));
+
+  const positionsMaybe = await Promise.all(
+    nftCandidates.map(async (acc) => {
+      const nftMint = new PublicKey(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (acc.account.data as any).parsed.info.mint as string,
+      );
+      const position = derivePositionAddress(nftMint);
+      const positionInfo = await connection.getAccountInfo(position);
+      if (!positionInfo) return null;
+
+      const positionState = await cpAmm.fetchPositionState(position);
+      const pool = positionState.pool;
+      const poolState = await cpAmm.fetchPoolState(pool);
+      const unclaimedFees = getUnClaimLpFee(poolState, positionState);
+
+      return {
+        pool: pool.toBase58(),
+        position: position.toBase58(),
+        positionNftAccount: acc.pubkey.toBase58(),
+        positionNftMint: nftMint.toBase58(),
+        tokenAMint: poolState.tokenAMint.toBase58(),
+        tokenBMint: poolState.tokenBMint.toBase58(),
+        unclaimedFeeA: unclaimedFees.feeTokenA.toString(),
+        unclaimedFeeB: unclaimedFees.feeTokenB.toString(),
+      } satisfies VaultPositionInfoBase;
+    }),
+  );
+
+  const positionsRaw = positionsMaybe.filter((p): p is VaultPositionInfoBase => p !== null);
+
+  const uniqueMintStrings = [
+    ...new Set(
+      positionsRaw.flatMap((p) => [p.tokenAMint, p.tokenBMint]),
+    ),
+  ];
+  const mintMetadataEntries = await Promise.all(
+    uniqueMintStrings.map(async (mintStr) => {
+      const info = await getTokenDisplayInfo(connection, new PublicKey(mintStr));
+      return [mintStr, info] as const;
+    }),
+  );
+  const mintMetadataMap = new Map<string, TokenDisplayInfo>(mintMetadataEntries);
+
+  const positions = positionsRaw.map((p) => {
+    const tokenAInfo = mintMetadataMap.get(p.tokenAMint) ?? { name: 'Unknown', symbol: '???' };
+    const tokenBInfo = mintMetadataMap.get(p.tokenBMint) ?? { name: 'Unknown', symbol: '???' };
+    return {
+      ...p,
+      tokenAName: tokenAInfo.name,
+      tokenASymbol: tokenAInfo.symbol,
+      tokenBName: tokenBInfo.name,
+      tokenBSymbol: tokenBInfo.symbol,
+    };
+  });
+
+  return {
+    vaultPubkey: vault.toBase58(),
+    totalPositions: positions.length,
+    positions,
   };
 }
 
