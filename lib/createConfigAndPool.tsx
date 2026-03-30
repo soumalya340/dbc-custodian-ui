@@ -38,7 +38,15 @@ export async function createConfigAndPool(
   connection: Connection,
   wallet: AnchorWallet,
   params: CreateConfigAndPoolParams,
-): Promise<{ tx: string; link: string; configAddress: string; poolAddress: string; baseMint: string }> {
+): Promise<{
+  configTx: string;
+  configTxLink: string;
+  poolTx: string;
+  poolTxLink: string;
+  configAddress: string;
+  poolAddress: string;
+  baseMint: string;
+}> {
   const { migrationQuoteThreshold, name, symbol, uri, network } = params;
 
   if (!Number.isFinite(migrationQuoteThreshold) || migrationQuoteThreshold <= 0) {
@@ -146,10 +154,23 @@ export async function createConfigAndPool(
     ...curveConfig,
   });
 
-  const configInstructions = configLegacyTx.instructions;
+  const { blockhash: configBlockhash } = await connection.getLatestBlockhash('confirmed');
+  const configMessageV0 = new TransactionMessage({
+    payerKey: wallet.publicKey,
+    recentBlockhash: configBlockhash,
+    instructions: configLegacyTx.instructions,
+  }).compileToV0Message();
 
-  // ── Build pool instructions ──
+  const configVersionedTransaction = new VersionedTransaction(configMessageV0);
+  configVersionedTransaction.sign([config]);
+  const signedConfigTx = await wallet.signTransaction(configVersionedTransaction);
+  const configSignature = await connection.sendTransaction(signedConfigTx, {
+    skipPreflight: true,
+    maxRetries: 3,
+  });
+  await connection.confirmTransaction(configSignature, 'confirmed');
 
+  // ── Build and send pool tx only after config exists on-chain ──
   const createPoolLegacyTx = await client.pool.createPool({
     baseMint: baseMint.publicKey,
     config: config.publicKey,
@@ -160,40 +181,31 @@ export async function createConfigAndPool(
     poolCreator: wallet.publicKey,
   });
 
-  const poolInstructions = createPoolLegacyTx.instructions;
-
-  // ── Merge all instructions into one transaction ──
-
-  const allInstructions = [...configInstructions, ...poolInstructions];
-
-  const { blockhash } = await connection.getLatestBlockhash('confirmed');
-
-  const messageV0 = new TransactionMessage({
+  const { blockhash: poolBlockhash } = await connection.getLatestBlockhash('confirmed');
+  const poolMessageV0 = new TransactionMessage({
     payerKey: wallet.publicKey,
-    recentBlockhash: blockhash,
-    instructions: allInstructions,
+    recentBlockhash: poolBlockhash,
+    instructions: createPoolLegacyTx.instructions,
   }).compileToV0Message();
 
-  const versionedTransaction = new VersionedTransaction(messageV0);
+  const poolVersionedTransaction = new VersionedTransaction(poolMessageV0);
+  poolVersionedTransaction.sign([baseMint]);
 
-  // Partially sign with the generated keypairs (config + baseMint)
-  versionedTransaction.sign([config, baseMint]);
-
-  // Have the wallet sign
-  const signedTx = await wallet.signTransaction(versionedTransaction);
-
-  const signature = await connection.sendTransaction(signedTx, {
+  const signedPoolTx = await wallet.signTransaction(poolVersionedTransaction);
+  
+  const signature = await connection.sendTransaction(signedPoolTx, {
     skipPreflight: true,
     maxRetries: 3,
   });
-
   await connection.confirmTransaction(signature, 'confirmed');
 
   const poolAddress = deriveDbcPoolAddress(quoteMint, baseMint.publicKey, config.publicKey);
 
   return {
-    tx: signature,
-    link: solscanLink(signature, network),
+    configTx: configSignature,
+    configTxLink: solscanLink(configSignature, network),
+    poolTx: signature,
+    poolTxLink: solscanLink(signature, network),
     configAddress: config.publicKey.toBase58(),
     poolAddress: poolAddress.toBase58(),
     baseMint: baseMint.publicKey.toBase58(),

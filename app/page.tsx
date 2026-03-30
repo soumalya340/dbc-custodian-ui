@@ -253,11 +253,13 @@ function AccordionItem({
           network: net,
         });
         data = {
-          tx: r.tx,
           configAddress: r.configAddress,
           poolAddress: r.poolAddress,
           baseMint: r.baseMint,
-          solscan: r.link,
+          configTx: r.configTx,
+          configTxLink: r.configTxLink,
+          poolTx: r.poolTx,
+          solscan: r.poolTxLink,
         };
       } else if (fn.id === 'claim_dbc_fee') {
         const r = await claimDbcPartnerFee(connection, anchorWallet!, {
