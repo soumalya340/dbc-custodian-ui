@@ -52,7 +52,7 @@ const VIEW_FUNCTIONS: FunctionDef[] = [
   },
   {
     id: 'view_fee_vaults',
-    number: '1E',
+    number: '1B',
     title: 'View Fee Vault Balances',
     description: 'Check the current token balances in the program-owned fee vaults for a pool.',
     fields: [
