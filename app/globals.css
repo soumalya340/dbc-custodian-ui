@@ -1,26 +1,54 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #07070f;
+  --foreground: #e8e8f0;
+  --card: #0e0e1a;
+  --card-border: #1e1e30;
+  --accent: #7c3aed;
+  --accent-glow: rgba(124, 58, 237, 0.3);
+  --accent-2: #06b6d4;
+  --muted: #3a3a52;
+  --muted-fg: #8888aa;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--card);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 3px;
+}
+
+/* Accordion animation */
+.accordion-content {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  max-height: 0;
+  opacity: 0;
+}
+.accordion-content.open {
+  max-height: 800px;
+  opacity: 1;
+}
+
+/* Input focus glow */
+input:focus, select:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow), 0 0 0 1px var(--accent);
 }

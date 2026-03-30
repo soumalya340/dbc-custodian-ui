@@ -1,0 +1,1475 @@
+{
+  "address": "2VgCjezWK4kHxoute1Jy986AXVPvSkwquPX5VBVwQMzV",
+  "metadata": {
+    "name": "dbc_swap",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "docs": [
+    "# DBC Swap Program",
+    "",
+    "A pass-through wrapper around the Dynamic Bonding Curve (DBC) program that",
+    "adds a layer of fee management on top of standard DBC operations:",
+    "- Initialize virtual pools with Token2022",
+    "- Swap tokens via CPI into DBC",
+    "- Claim accumulated partner trading fees into PDA-owned vaults",
+    "- Withdraw fee shares to registered claimers (BPS-based splits)"
+  ],
+  "instructions": [
+    {
+      "name": "claim_partner_trading_fee",
+      "docs": [
+        "Permissionless — sweeps accrued partner trading fees from the DBC pool",
+        "into this program's PDA-owned fee vaults.",
+        "",
+        "# Arguments",
+        "* `max_amount_a` - Maximum base token amount to claim",
+        "* `max_amount_b` - Maximum quote token amount to claim"
+      ],
+      "discriminator": [
+        123,
+        126,
+        241,
+        171,
+        152,
+        241,
+        18,
+        123
+      ],
+      "accounts": [
+        {
+          "name": "pool_authority"
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "pool_claimers",
+          "docs": [
+            "Per-pool claimers config — last_claimed is stamped after each successful claim."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_fee_vault",
+          "docs": [
+            "Per-pool PDA-owned vault that accumulates base token fees.",
+            "Created on first call (init_if_needed)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "quote_fee_vault",
+          "docs": [
+            "Per-pool PDA-owned vault that accumulates quote token fees."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_pool_vault",
+          "writable": true
+        },
+        {
+          "name": "quote_pool_vault",
+          "writable": true
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "fee_claimer",
+          "docs": [
+            "PDA of this program — registered as feeClaimer in the DBC config.",
+            "Derive off-chain:",
+            "PublicKey.findProgramAddressSync([Buffer.from(\"fee_claimer\")], PROGRAM_ID)"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_base_program"
+        },
+        {
+          "name": "token_quote_program"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "dbc_program",
+          "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Pays rent for vault account creation on the first call."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "max_amount_a",
+          "type": "u64"
+        },
+        {
+          "name": "max_amount_b",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "claim_position_fee",
+      "docs": [
+        "Permissionless — claims position fees from the cp_amm pool into",
+        "PDA-owned fee vaults. All registered claimers can then withdraw",
+        "their BPS shares via `withdraw_from_fee_vault`."
+      ],
+      "discriminator": [
+        180,
+        38,
+        154,
+        17,
+        133,
+        33,
+        162,
+        211
+      ],
+      "accounts": [
+        {
+          "name": "pool_authority"
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "pool_claimers",
+          "docs": [
+            "Per-pool claimers config — last_claimed is stamped after each successful claim."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "base_fee_vault",
+          "docs": [
+            "Per-pool PDA-owned vault that accumulates token A fees."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "token_a_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "quote_fee_vault",
+          "docs": [
+            "Per-pool PDA-owned vault that accumulates token B fees."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "token_b_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_a_vault",
+          "writable": true
+        },
+        {
+          "name": "token_b_vault",
+          "writable": true
+        },
+        {
+          "name": "token_a_mint"
+        },
+        {
+          "name": "token_b_mint"
+        },
+        {
+          "name": "position_nft_account"
+        },
+        {
+          "name": "token_a_program"
+        },
+        {
+          "name": "token_b_program"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "cp_amm_program",
+          "address": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Pays rent for vault account creation on the first call."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "fee_claimer",
+          "docs": [
+            "PDA signer — acts as the position owner for the CPI.",
+            "The position NFT must be held in a token account with this PDA as authority."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "distribute_fees",
+      "docs": [
+        "Permissionless — distributes the entire current fee vault balance to all",
+        "registered claimers proportionally by BPS in a single transaction.",
+        "Designed for the DAMM v2 path. Remaining accounts must be passed as",
+        "[claimer_0_base_ata, claimer_0_quote_ata, claimer_1_base_ata, ...]."
+      ],
+      "discriminator": [
+        120,
+        56,
+        27,
+        7,
+        53,
+        176,
+        113,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "docs": [
+            "Anyone can crank this — no signer restriction."
+          ],
+          "signer": true
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "pool_claimers",
+          "docs": [
+            "Per-pool claimers config — read for addresses + BPS, mutated for totals."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_fee_vault",
+          "docs": [
+            "Per-pool PDA base fee vault (source of funds)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "quote_fee_vault",
+          "docs": [
+            "Per-pool PDA quote fee vault (source of funds)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "quote_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "fee_claimer",
+          "docs": [
+            "PDA signer for vault transfers"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_base_program"
+        },
+        {
+          "name": "token_quote_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "remove_all_liquidity",
+      "docs": [
+        "Admin-only — removes ALL liquidity from a cp_amm pool position."
+      ],
+      "discriminator": [
+        10,
+        51,
+        61,
+        35,
+        112,
+        105,
+        24,
+        85
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+        },
+        {
+          "name": "pool_authority"
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "token_a_account",
+          "docs": [
+            "Admin's token A account — withdrawn liquidity goes here"
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_b_account",
+          "docs": [
+            "Admin's token B account — withdrawn liquidity goes here"
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_a_vault",
+          "writable": true
+        },
+        {
+          "name": "token_b_vault",
+          "writable": true
+        },
+        {
+          "name": "token_a_mint"
+        },
+        {
+          "name": "token_b_mint"
+        },
+        {
+          "name": "position_nft_account"
+        },
+        {
+          "name": "fee_claimer",
+          "docs": [
+            "PDA signer — acts as the position owner for the CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_a_program"
+        },
+        {
+          "name": "token_b_program"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "cp_amm_program",
+          "address": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
+        }
+      ],
+      "args": [
+        {
+          "name": "token_a_amount_threshold",
+          "type": "u64"
+        },
+        {
+          "name": "token_b_amount_threshold",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "remove_liquidity",
+      "docs": [
+        "Admin-only — removes liquidity from a cp_amm pool position."
+      ],
+      "discriminator": [
+        80,
+        85,
+        209,
+        72,
+        24,
+        206,
+        177,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+        },
+        {
+          "name": "pool_authority"
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "token_a_account",
+          "docs": [
+            "Admin's token A account — withdrawn liquidity goes here"
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_b_account",
+          "docs": [
+            "Admin's token B account — withdrawn liquidity goes here"
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_a_vault",
+          "writable": true
+        },
+        {
+          "name": "token_b_vault",
+          "writable": true
+        },
+        {
+          "name": "token_a_mint"
+        },
+        {
+          "name": "token_b_mint"
+        },
+        {
+          "name": "position_nft_account"
+        },
+        {
+          "name": "fee_claimer",
+          "docs": [
+            "PDA signer — acts as the position owner for the CPI"
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_a_program"
+        },
+        {
+          "name": "token_b_program"
+        },
+        {
+          "name": "event_authority"
+        },
+        {
+          "name": "cp_amm_program",
+          "address": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "RemoveLiquidityParameters"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_pool_claimers",
+      "docs": [
+        "Sets (or replaces) the list of claimers and their BPS fee shares for",
+        "a specific pool. Only callable by DEPLOYER_ADDRESS.",
+        "Resets all claimed amounts to zero on each call.",
+        "`pool_state` must be `Dbc` or `DammV2` — determines which fee path applies."
+      ],
+      "discriminator": [
+        244,
+        181,
+        23,
+        200,
+        127,
+        7,
+        109,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "deployer",
+          "writable": true,
+          "signer": true,
+          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "pool_claimers",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "claimer_addresses",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "claimer_bps",
+          "type": {
+            "vec": "u16"
+          }
+        },
+        {
+          "name": "pool_state",
+          "type": {
+            "defined": {
+              "name": "PoolState"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_claimers_bps",
+      "docs": [
+        "Admin-only — updates only the BPS shares of the existing claimer list",
+        "for a pool. Claimer addresses and all claimed amount history are preserved.",
+        "Use this to rebalance fee splits without disturbing historical records."
+      ],
+      "discriminator": [
+        102,
+        214,
+        197,
+        251,
+        60,
+        218,
+        99,
+        110
+      ],
+      "accounts": [
+        {
+          "name": "deployer",
+          "writable": true,
+          "signer": true,
+          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "pool_claimers",
+          "docs": [
+            "Must already be initialized via `set_pool_claimers`.",
+            "Only `claimer_bps` is updated — addresses and claimed amounts are untouched."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_bps",
+          "type": {
+            "vec": "u16"
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "PoolClaimers",
+      "discriminator": [
+        60,
+        146,
+        188,
+        214,
+        218,
+        48,
+        211,
+        80
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AllLiquidityRemoved",
+      "discriminator": [
+        200,
+        235,
+        69,
+        152,
+        117,
+        67,
+        205,
+        26
+      ]
+    },
+    {
+      "name": "ClaimersBpsUpdated",
+      "discriminator": [
+        79,
+        145,
+        116,
+        144,
+        236,
+        123,
+        159,
+        248
+      ]
+    },
+    {
+      "name": "FeesDistributedDammV2",
+      "discriminator": [
+        76,
+        203,
+        175,
+        112,
+        24,
+        112,
+        14,
+        130
+      ]
+    },
+    {
+      "name": "FeesDistributedDbc",
+      "discriminator": [
+        95,
+        34,
+        237,
+        184,
+        142,
+        74,
+        201,
+        150
+      ]
+    },
+    {
+      "name": "LiquidityRemoved",
+      "discriminator": [
+        225,
+        105,
+        216,
+        39,
+        124,
+        116,
+        169,
+        189
+      ]
+    },
+    {
+      "name": "PartnerFeesClaimed",
+      "discriminator": [
+        142,
+        68,
+        1,
+        218,
+        57,
+        124,
+        50,
+        112
+      ]
+    },
+    {
+      "name": "PoolClaimersSet",
+      "discriminator": [
+        191,
+        125,
+        13,
+        9,
+        139,
+        190,
+        234,
+        7
+      ]
+    },
+    {
+      "name": "PositionFeeClaimed",
+      "discriminator": [
+        19,
+        216,
+        6,
+        218,
+        101,
+        90,
+        226,
+        3
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Unauthorized: caller is not the admin"
+    },
+    {
+      "code": 6001,
+      "name": "ClaimerLengthMismatch",
+      "msg": "claimer_addresses and claimer_bps must have the same length"
+    },
+    {
+      "code": 6002,
+      "name": "TooManyClaimers",
+      "msg": "Number of claimers exceeds the maximum of 5"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidTotalBps",
+      "msg": "Total basis points must sum to 10000"
+    },
+    {
+      "code": 6004,
+      "name": "ClaimerNotFound",
+      "msg": "Caller is not in the pool's claimer list"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidClaimerAta",
+      "msg": "Not proper ATA"
+    },
+    {
+      "code": 6006,
+      "name": "DuplicateClaimerAddress",
+      "msg": "Duplicate claimer address — each address must appear exactly once"
+    },
+    {
+      "code": 6007,
+      "name": "InvalidPoolState",
+      "msg": "pool_state must be Dbc or DammV2 — NotInitialized is not allowed"
+    }
+  ],
+  "types": [
+    {
+      "name": "AllLiquidityRemoved",
+      "docs": [
+        "Emitted when all liquidity is removed from a cp_amm position."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_a_threshold",
+            "type": "u64"
+          },
+          {
+            "name": "token_b_threshold",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimersBpsUpdated",
+      "docs": [
+        "Emitted when only the BPS shares are updated without touching addresses."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_bps",
+            "type": {
+              "vec": "u16"
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeesDistributedDammV2",
+      "docs": [
+        "Emitted when the full vault balance is pushed out to all claimers at once."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_base_distributed",
+            "type": "u64"
+          },
+          {
+            "name": "total_quote_distributed",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeesDistributedDbc",
+      "docs": [
+        "Emitted when a single claimer withdraws their BPS share from the DBC fee vault."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "claimer",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_amount",
+            "type": "u64"
+          },
+          {
+            "name": "quote_amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LiquidityRemoved",
+      "docs": [
+        "Emitted when a partial liquidity removal is executed on a cp_amm position."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PartnerFeesClaimed",
+      "docs": [
+        "Emitted when partner trading fees are swept from the DBC pool into vaults."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolClaimers",
+      "docs": [
+        "Per-pool claimers config — stores up to MAX_CLAIMERS wallets and their",
+        "respective fee-share in basis points (10000 = 100%).",
+        "PDA: [POOL_CLAIMERS_SEED, pool_address]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "claimer_addresses",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "claimer_bps",
+            "type": {
+              "vec": "u16"
+            }
+          },
+          {
+            "name": "claimed_base",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "claimed_quote",
+            "type": {
+              "vec": "u64"
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "pool_state",
+            "docs": [
+              "Which AMM this pool is associated with."
+            ],
+            "type": {
+              "defined": {
+                "name": "PoolState"
+              }
+            }
+          },
+          {
+            "name": "last_claimed",
+            "docs": [
+              "Unix timestamp (seconds) of the last time fees were claimed or distributed."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "last_distributed",
+            "docs": [
+              "Unix timestamp (seconds) of the last time fees were distributed."
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolClaimersSet",
+      "docs": [
+        "Emitted when the full claimer list for a pool is set or replaced."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "claimer_addresses",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "claimer_bps",
+            "type": {
+              "vec": "u16"
+            }
+          },
+          {
+            "name": "pool_state",
+            "type": {
+              "defined": {
+                "name": "PoolState"
+              }
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolState",
+      "docs": [
+        "Which AMM protocol this pool belongs to.",
+        "`NotInitialized` is the zero-value default — any account that has not yet",
+        "had `set_pool_claimers` called on it will read as `NotInitialized`."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "NotInitialized"
+          },
+          {
+            "name": "Dbc"
+          },
+          {
+            "name": "DammV2"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PositionFeeClaimed",
+      "docs": [
+        "Emitted when position fees are claimed from the cp_amm pool into vaults."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RemoveLiquidityParameters",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "liquidity_delta",
+            "type": "u128"
+          },
+          {
+            "name": "token_a_amount_threshold",
+            "type": "u64"
+          },
+          {
+            "name": "token_b_amount_threshold",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}
