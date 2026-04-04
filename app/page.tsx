@@ -117,9 +117,9 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
     id: 'claim_dammv2_fee',
     number: '2C',
     title: 'Claim DAMM v2 Position Fee',
-    description: "Claims accumulated LP position fees from a DAMM v2 pool into this program's fee vaults. Pass the position NFT mint — everything else is resolved on-chain.",
+    description: "Claims accumulated LP position fees from a DAMM v2 pool into this program's fee vaults. Pass the DAMM v2 pool address — the vault-owned position is resolved automatically.",
     fields: [
-      { name: 'nft_mint', label: 'Position NFT Mint', placeholder: 'Position NFT mint pubkey', hint: 'The NFT mint address representing the LP position' },
+      { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
     ],
     submitLabel: 'Claim Position Fees',
   },
@@ -655,7 +655,7 @@ function AccordionItem({
         data = { tx: r.tx, solscan: r.link };
       } else if (fn.id === 'claim_dammv2_fee') {
         const r = await claimDammV2PositionFee(connection, anchorWallet!, {
-          nftMint: values.nft_mint,
+          poolAddress: values.pool_address,
           network: net,
         });
         data = { tx: r.tx, solscan: r.link };

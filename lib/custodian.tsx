@@ -961,24 +961,47 @@ export async function claimDammV2PositionFee(
   connection: Connection,
   wallet: AnchorWallet,
   params: {
-    nftMint: string;
+    poolAddress: string;
     network: 'devnet' | 'mainnet';
   },
 ): Promise<{ tx: string; link: string }> {
   const program = createProgram(wallet, connection);
   const cpAmm = new CpAmm(connection);
-  const nftMintPk = new PublicKey(params.nftMint);
+  const pool = new PublicKey(params.poolAddress);
+  const vault = deriveFeeClaimerPda();
 
-  const position = derivePositionAddress(nftMintPk);
-  const positionNftAccount = derivePositionNftAccount(nftMintPk);
+  // Find the position NFT owned by the vault that belongs to this pool.
+  const [legacyTokenAccounts, token2022Accounts] = await Promise.all([
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_PROGRAM_ID }),
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_2022_PROGRAM_ID }),
+  ]);
 
-  const positionAccountInfo = await connection.getAccountInfo(position);
-  if (!positionAccountInfo) {
-    throw new Error(`Position account not found for NFT mint ${params.nftMint}`);
+  const allTokenAccounts = [...legacyTokenAccounts.value, ...token2022Accounts.value];
+  const nftCandidates = allTokenAccounts.filter((acc) => isLikelyPositionNftAccount(acc.account));
+
+  let nftMintPk: PublicKey | null = null;
+  let position: PublicKey | null = null;
+  let positionNftAccount: PublicKey | null = null;
+
+  for (const acc of nftCandidates) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mintStr = (acc.account.data as any).parsed.info.mint as string;
+    const candidateMint = new PublicKey(mintStr);
+    const candidatePosition = derivePositionAddress(candidateMint);
+    const positionInfo = await connection.getAccountInfo(candidatePosition);
+    if (!positionInfo) continue;
+    const positionState = await cpAmm.fetchPositionState(candidatePosition);
+    if (positionState.pool.equals(pool)) {
+      nftMintPk = candidateMint;
+      position = candidatePosition;
+      positionNftAccount = derivePositionNftAccount(candidateMint);
+      break;
+    }
   }
 
-  const positionState = await cpAmm.fetchPositionState(position);
-  const pool = positionState.pool;
+  if (!nftMintPk || !position || !positionNftAccount) {
+    throw new Error(`No vault-owned position found for DAMM v2 pool ${params.poolAddress}`);
+  }
   const poolState = await cpAmm.fetchPoolState(pool);
 
   const tokenAProgram = getTokenProgram(poolState.tokenAFlag);
