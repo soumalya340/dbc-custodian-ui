@@ -18,6 +18,173 @@
   ],
   "instructions": [
     {
+      "name": "admin_sweep_claimer",
+      "docs": [
+        "Admin-only — transfers `pending_base` / `pending_quote` from fee vaults to",
+        "the supplied destination ATAs (e.g. after a claimer was disabled)."
+      ],
+      "discriminator": [
+        162,
+        31,
+        38,
+        141,
+        130,
+        238,
+        160,
+        127
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "signer": true,
+          "address": "ABwFt9iF2sUrffC9SxeCsuGd1hB78GU6u7x7VgpqQDka"
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "claimer"
+        },
+        {
+          "name": "claimer_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "claimer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "claimer_pending_base_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  95,
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  98,
+                  97,
+                  115,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "claimer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "claimer_pending_quote_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  95,
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  113,
+                  117,
+                  111,
+                  116,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "claimer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "destination_base_ata",
+          "writable": true
+        },
+        {
+          "name": "destination_quote_ata",
+          "writable": true
+        },
+        {
+          "name": "token_base_program"
+        },
+        {
+          "name": "token_quote_program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "claim_partner_trading_fee",
       "docs": [
         "Permissionless — sweeps accrued partner trading fees from the DBC pool",
@@ -447,9 +614,6 @@
       "accounts": [
         {
           "name": "caller",
-          "docs": [
-            "Anyone can crank this — no signer restriction."
-          ],
           "signer": true
         },
         {
@@ -457,9 +621,6 @@
         },
         {
           "name": "pool_claimers",
-          "docs": [
-            "Per-pool claimers config — read for addresses + BPS, mutated for totals."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -490,9 +651,6 @@
         },
         {
           "name": "base_fee_vault",
-          "docs": [
-            "Per-pool PDA base fee vault (source of funds)"
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -523,9 +681,6 @@
         },
         {
           "name": "quote_fee_vault",
-          "docs": [
-            "Per-pool PDA quote fee vault (source of funds)"
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -562,9 +717,6 @@
         },
         {
           "name": "fee_claimer",
-          "docs": [
-            "PDA signer for vault transfers"
-          ],
           "pda": {
             "seeds": [
               {
@@ -594,6 +746,104 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "initialize_pool_claimers",
+      "docs": [
+        "Sets (or replaces) the list of claimers and their BPS fee shares for",
+        "a specific pool. Only callable by DEPLOYER_ADDRESS.",
+        "Resets all claimed amounts to zero on each call.",
+        "`pool_state` must be `Dbc` or `DammV2` — determines which fee path applies."
+      ],
+      "discriminator": [
+        236,
+        20,
+        205,
+        120,
+        203,
+        193,
+        137,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "deployer",
+          "writable": true,
+          "signer": true,
+          "address": "ABwFt9iF2sUrffC9SxeCsuGd1hB78GU6u7x7VgpqQDka"
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "quote_mint"
+        },
+        {
+          "name": "pool_claimers",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_base_program"
+        },
+        {
+          "name": "token_quote_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "claimer_addresses",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "claimer_bps",
+          "type": {
+            "vec": "u16"
+          }
+        },
+        {
+          "name": "pool_state",
+          "type": {
+            "defined": {
+              "name": "PoolState"
+            }
+          }
+        }
+      ]
     },
     {
       "name": "remove_all_liquidity",
@@ -824,46 +1074,40 @@
       ]
     },
     {
-      "name": "set_pool_claimers",
+      "name": "set_claimer_enabled",
       "docs": [
-        "Sets (or replaces) the list of claimers and their BPS fee shares for",
-        "a specific pool. Only callable by DEPLOYER_ADDRESS.",
-        "Resets all claimed amounts to zero on each call.",
-        "`pool_state` must be `Dbc` or `DammV2` — determines which fee path applies."
+        "Admin-only — enables or disables a claimer for live `distribute_fees` payouts."
       ],
       "discriminator": [
-        244,
-        181,
-        23,
-        200,
-        127,
-        7,
-        109,
-        109
+        217,
+        9,
+        250,
+        243,
+        164,
+        119,
+        102,
+        83
       ],
       "accounts": [
         {
-          "name": "deployer",
-          "writable": true,
+          "name": "admin",
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "ABwFt9iF2sUrffC9SxeCsuGd1hB78GU6u7x7VgpqQDka"
         },
         {
           "name": "pool"
         },
         {
-          "name": "pool_claimers",
+          "name": "claimer"
+        },
+        {
+          "name": "claimer_state",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
                 "value": [
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
                   99,
                   108,
                   97,
@@ -871,41 +1115,30 @@
                   109,
                   101,
                   114,
-                  115
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
                 ]
               },
               {
                 "kind": "account",
                 "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "claimer"
               }
             ]
           }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
         {
-          "name": "claimer_addresses",
-          "type": {
-            "vec": "pubkey"
-          }
-        },
-        {
-          "name": "claimer_bps",
-          "type": {
-            "vec": "u16"
-          }
-        },
-        {
-          "name": "pool_state",
-          "type": {
-            "defined": {
-              "name": "PoolState"
-            }
-          }
+          "name": "is_enabled",
+          "type": "bool"
         }
       ]
     },
@@ -931,7 +1164,7 @@
           "name": "deployer",
           "writable": true,
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "ABwFt9iF2sUrffC9SxeCsuGd1hB78GU6u7x7VgpqQDka"
         },
         {
           "name": "pool"
@@ -982,6 +1215,19 @@
     }
   ],
   "accounts": [
+    {
+      "name": "ClaimerState",
+      "discriminator": [
+        210,
+        163,
+        0,
+        152,
+        127,
+        111,
+        40,
+        199
+      ]
+    },
     {
       "name": "PoolClaimers",
       "discriminator": [
@@ -1142,6 +1388,16 @@
       "code": 6007,
       "name": "InvalidPoolState",
       "msg": "pool_state must be Dbc or DammV2 — NotInitialized is not allowed"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidClaimerStatePda",
+      "msg": "Invalid ClaimerState PDA -- when creating claimer states"
+    },
+    {
+      "code": 6009,
+      "name": "NothingToClaim",
+      "msg": "Nothing to claim -- when claiming fees from the parked pool vault"
     }
   ],
   "types": [
@@ -1172,6 +1428,38 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimerState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "claimer",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_enabled",
+            "type": "bool"
+          },
+          {
+            "name": "claimed_base",
+            "type": "u64"
+          },
+          {
+            "name": "claimed_quote",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }
@@ -1328,26 +1616,11 @@
             }
           },
           {
-            "name": "claimed_base",
-            "type": {
-              "vec": "u64"
-            }
-          },
-          {
-            "name": "claimed_quote",
-            "type": {
-              "vec": "u64"
-            }
-          },
-          {
             "name": "bump",
             "type": "u8"
           },
           {
             "name": "pool_state",
-            "docs": [
-              "Which AMM this pool is associated with."
-            ],
             "type": {
               "defined": {
                 "name": "PoolState"
@@ -1356,16 +1629,10 @@
           },
           {
             "name": "last_claimed",
-            "docs": [
-              "Unix timestamp (seconds) of the last time fees were claimed or distributed."
-            ],
             "type": "i64"
           },
           {
             "name": "last_distributed",
-            "docs": [
-              "Unix timestamp (seconds) of the last time fees were distributed."
-            ],
             "type": "i64"
           }
         ]

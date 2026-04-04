@@ -77,6 +77,83 @@ export function derivePoolFeeVaults(
   return { baseFeeVault, quoteFeeVault };
 }
 
+export function deriveClaimerStatePda(pool: PublicKey, claimer: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('claimer_state'), pool.toBuffer(), claimer.toBuffer()],
+    MY_DBC_CUSTODIAN_PROGRAM_ID,
+  );
+  return pda;
+}
+
+export function deriveClaimerPendingBaseVault(pool: PublicKey, claimer: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('claimer_pending_base'), pool.toBuffer(), claimer.toBuffer()],
+    MY_DBC_CUSTODIAN_PROGRAM_ID,
+  );
+  return pda;
+}
+
+export function deriveClaimerPendingQuoteVault(pool: PublicKey, claimer: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('claimer_pending_quote'), pool.toBuffer(), claimer.toBuffer()],
+    MY_DBC_CUSTODIAN_PROGRAM_ID,
+  );
+  return pda;
+}
+
+export type ClaimerRemainingAccountMeta = {
+  pubkey: PublicKey;
+  isSigner: boolean;
+  isWritable: boolean;
+};
+
+/** Per claimer: [claimer_state_pda, pending_base_vault, pending_quote_vault] */
+export function buildInitClaimersRemainingAccounts(
+  pool: PublicKey,
+  claimers: PublicKey[],
+): ClaimerRemainingAccountMeta[] {
+  return claimers.flatMap((claimer) => [
+    { pubkey: deriveClaimerStatePda(pool, claimer), isSigner: false, isWritable: true },
+    { pubkey: deriveClaimerPendingBaseVault(pool, claimer), isSigner: false, isWritable: true },
+    { pubkey: deriveClaimerPendingQuoteVault(pool, claimer), isSigner: false, isWritable: true },
+  ]);
+}
+
+/** Per claimer: [state, pending_base, pending_quote, base_ata, quote_ata] */
+export function buildDistributeFeesRemainingAccounts(
+  pool: PublicKey,
+  claimers: PublicKey[],
+  baseMint: PublicKey,
+  quoteMint: PublicKey,
+  baseTokenProgram: PublicKey,
+  quoteTokenProgram: PublicKey,
+): ClaimerRemainingAccountMeta[] {
+  return claimers.flatMap((claimer) => {
+    const claimerStatePda = deriveClaimerStatePda(pool, claimer);
+    const pendingBaseVault = deriveClaimerPendingBaseVault(pool, claimer);
+    const pendingQuoteVault = deriveClaimerPendingQuoteVault(pool, claimer);
+    const claimerBaseAta = getAssociatedTokenAddressSync(
+      baseMint,
+      claimer,
+      false,
+      baseTokenProgram,
+    );
+    const claimerQuoteAta = getAssociatedTokenAddressSync(
+      quoteMint,
+      claimer,
+      false,
+      quoteTokenProgram,
+    );
+    return [
+      { pubkey: claimerStatePda, isSigner: false, isWritable: true },
+      { pubkey: pendingBaseVault, isSigner: false, isWritable: true },
+      { pubkey: pendingQuoteVault, isSigner: false, isWritable: true },
+      { pubkey: claimerBaseAta, isSigner: false, isWritable: true },
+      { pubkey: claimerQuoteAta, isSigner: false, isWritable: true },
+    ];
+  });
+}
+
 export function deriveCpAmmEventAuthority(cpAmmProgramId: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('__event_authority')],
@@ -152,13 +229,26 @@ export async function viewPoolClaimers(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const state: any = await (program.account as any).poolClaimers.fetch(pda);
 
-  const claimers: ClaimerInfo[] = state.claimerAddresses.map(
-    (addr: PublicKey, i: number) => ({
-      address: addr.toBase58(),
-      bps: state.claimerBps[i],
-      pct: `${(state.claimerBps[i] / 100).toFixed(2)}%`,
-      claimedBase: state.claimedBase[i].toString(),
-      claimedQuote: state.claimedQuote[i].toString(),
+  const claimers: ClaimerInfo[] = await Promise.all(
+    state.claimerAddresses.map(async (addr: PublicKey, i: number) => {
+      const claimerStatePda = deriveClaimerStatePda(pool, addr);
+      let claimedBase = '0';
+      let claimedQuote = '0';
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cs: any = await (program.account as any).claimerState.fetch(claimerStatePda);
+        claimedBase = cs.claimedBase.toString();
+        claimedQuote = cs.claimedQuote.toString();
+      } catch {
+        // ClaimerState PDA not created yet
+      }
+      return {
+        address: addr.toBase58(),
+        bps: state.claimerBps[i],
+        pct: `${(state.claimerBps[i] / 100).toFixed(2)}%`,
+        claimedBase,
+        claimedQuote,
+      };
     }),
   );
 
@@ -171,6 +261,49 @@ export async function viewPoolClaimers(
     lastDistributed: state.lastDistributed.toString(),
     claimers,
   };
+}
+
+/** Single claimer `ClaimerState` account (all on-chain fields except bump). */
+export interface ClaimerPoolInfo {
+  claimerStatePda: string;
+  pool: string;
+  claimer: string;
+  isEnabled: boolean;
+  claimedBase: string;
+  claimedQuote: string;
+}
+
+export async function viewClaimerPoolInfo(
+  connection: Connection,
+  poolAddress: string,
+  claimerAddress: string,
+): Promise<ClaimerPoolInfo> {
+  const dummyWallet: AnchorWallet = {
+    publicKey: PublicKey.default,
+    signTransaction: async (tx) => tx,
+    signAllTransactions: async (txs) => txs,
+  };
+  const program = createProgram(dummyWallet, connection);
+  const pool = new PublicKey(poolAddress);
+  const claimer = new PublicKey(claimerAddress);
+  const claimerStatePda = deriveClaimerStatePda(pool, claimer);
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cs: any = await (program.account as any).claimerState.fetch(claimerStatePda);
+    return {
+      claimerStatePda: claimerStatePda.toBase58(),
+      pool: cs.pool.toBase58(),
+      claimer: cs.claimer.toBase58(),
+      isEnabled: Boolean(cs.isEnabled),
+      claimedBase: cs.claimedBase.toString(),
+      claimedQuote: cs.claimedQuote.toString(),
+    };
+  } catch {
+    throw new Error(
+      'ClaimerState not found — pool/claimer may be wrong or claimer not initialized (run initialize pool claimers first).',
+    );
+  }
 }
 
 // ─── View: DBC Pool State ─────────────────────────────────────────────────────
@@ -432,14 +565,14 @@ export async function viewVaultAllTokenInfo(connection: Connection): Promise<{
   };
 }
 
-// ─── Admin: Set Pool Claimers ─────────────────────────────────────────────────
+// ─── Admin: Initialize pool claimers ─────────────────────────────────────────
 
 export interface ClaimerEntry {
   address: string;
   bps: number;
 }
 
-export async function setPoolClaimers(
+export async function initializePoolClaimers(
   connection: Connection,
   wallet: AnchorWallet,
   params: {
@@ -457,13 +590,42 @@ export async function setPoolClaimers(
   const bps = params.claimers.map((c) => c.bps);
   const poolState = params.mode === 'dbc' ? { dbc: {} } : { dammV2: {} };
 
+  let baseMint: PublicKey;
+  let quoteMint: PublicKey;
+  let tokenBaseProgram: PublicKey;
+  let tokenQuoteProgram: PublicKey;
+
+  if (params.mode === 'dbc') {
+    const client = new DynamicBondingCurveClient(connection, 'confirmed');
+    const dbcPoolState = await client.state.getPool(pool);
+    baseMint = dbcPoolState.baseMint;
+    quoteMint = WSOL_MINT;
+    tokenBaseProgram = TOKEN_2022_PROGRAM_ID;
+    tokenQuoteProgram = TOKEN_PROGRAM_ID;
+  } else {
+    const cpAmm = new CpAmm(connection);
+    const poolState = await cpAmm.fetchPoolState(pool);
+    baseMint = poolState.tokenAMint;
+    quoteMint = poolState.tokenBMint;
+    tokenBaseProgram = getTokenProgram(poolState.tokenAFlag);
+    tokenQuoteProgram = getTokenProgram(poolState.tokenBFlag);
+  }
+
+  const initRemaining = buildInitClaimersRemainingAccounts(pool, claimerPubkeys);
+
   const sig: string = await programMethods(program)
-    .setPoolClaimers(claimerPubkeys, bps, poolState)
+    .initializePoolClaimers(claimerPubkeys, bps, poolState)
     .accounts({
       deployer: wallet.publicKey,
       pool,
-      poolClaimersPdaPubKey,
+      baseMint,
+      quoteMint,
+      poolClaimers: poolClaimersPdaPubKey,
+      tokenBaseProgram,
+      tokenQuoteProgram,
+      systemProgram: SystemProgram.programId,
     })
+    .remainingAccounts(initRemaining)
     .rpc();
 
   return { tx: sig, link: solscanLink(sig, params.network) };
@@ -484,11 +646,10 @@ export async function updateClaimersBps(
   const pool = new PublicKey(params.poolAddress);
   const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
 
-  const claimerPubkeys = params.claimers.map((c) => new PublicKey(c.address));
   const bps = params.claimers.map((c) => c.bps);
 
   const sig: string = await programMethods(program)
-    .updateClaimersBps(claimerPubkeys, bps)
+    .updateClaimersBps(bps)
     .accounts({
       deployer: wallet.publicKey,
       pool,
@@ -497,6 +658,135 @@ export async function updateClaimersBps(
     .rpc();
 
   return { tx: sig, link: solscanLink(sig, params.network) };
+}
+
+// ─── Admin: Set claimer enabled ───────────────────────────────────────────────
+
+export async function setClaimerEnabled(
+  connection: Connection,
+  wallet: AnchorWallet,
+  params: {
+    poolAddress: string;
+    claimerAddress: string;
+    isEnabled: boolean;
+    network: 'devnet' | 'mainnet';
+  },
+): Promise<{ tx: string; link: string }> {
+  const program = createProgram(wallet, connection);
+  const pool = new PublicKey(params.poolAddress);
+  const claimer = new PublicKey(params.claimerAddress);
+  const claimerState = deriveClaimerStatePda(pool, claimer);
+
+  const sig: string = await programMethods(program)
+    .setClaimerEnabled(params.isEnabled)
+    .accounts({
+      admin: wallet.publicKey,
+      pool,
+      claimer,
+      claimerState,
+    })
+    .rpc();
+
+  return { tx: sig, link: solscanLink(sig, params.network) };
+}
+
+// ─── Admin: Sweep locked / pending claimer vaults ────────────────────────────
+
+export async function adminSweepClaimer(
+  connection: Connection,
+  wallet: AnchorWallet,
+  params: {
+    poolAddress: string;
+    mode: 'dbc' | 'damm-v2';
+    claimerAddress: string;
+    recipientAddress: string;
+    network: 'devnet' | 'mainnet';
+  },
+): Promise<{ tx: string; link: string; ataTx?: string }> {
+  const program = createProgram(wallet, connection);
+  const pool = new PublicKey(params.poolAddress);
+  const claimer = new PublicKey(params.claimerAddress);
+  const recipient = new PublicKey(params.recipientAddress);
+
+  let baseMint: PublicKey;
+  let quoteMint: PublicKey;
+  let tokenBaseProgram: PublicKey;
+  let tokenQuoteProgram: PublicKey;
+
+  if (params.mode === 'dbc') {
+    const client = new DynamicBondingCurveClient(connection, 'confirmed');
+    const dbcPoolState = await client.state.getPool(pool);
+    baseMint = dbcPoolState.baseMint;
+    quoteMint = WSOL_MINT;
+    tokenBaseProgram = TOKEN_2022_PROGRAM_ID;
+    tokenQuoteProgram = TOKEN_PROGRAM_ID;
+  } else {
+    const cpAmm = new CpAmm(connection);
+    const poolState = await cpAmm.fetchPoolState(pool);
+    baseMint = poolState.tokenAMint;
+    quoteMint = poolState.tokenBMint;
+    tokenBaseProgram = getTokenProgram(poolState.tokenAFlag);
+    tokenQuoteProgram = getTokenProgram(poolState.tokenBFlag);
+  }
+
+  const claimerState = deriveClaimerStatePda(pool, claimer);
+  const claimerPendingBaseVault = deriveClaimerPendingBaseVault(pool, claimer);
+  const claimerPendingQuoteVault = deriveClaimerPendingQuoteVault(pool, claimer);
+
+  const destinationBaseAta = getAssociatedTokenAddressSync(
+    baseMint,
+    recipient,
+    false,
+    tokenBaseProgram,
+  );
+  const destinationQuoteAta = getAssociatedTokenAddressSync(
+    quoteMint,
+    recipient,
+    false,
+    tokenQuoteProgram,
+  );
+
+  const createAtaIxs = [
+    createAssociatedTokenAccountIdempotentInstruction(
+      wallet.publicKey,
+      destinationBaseAta,
+      recipient,
+      baseMint,
+      tokenBaseProgram,
+    ),
+    createAssociatedTokenAccountIdempotentInstruction(
+      wallet.publicKey,
+      destinationQuoteAta,
+      recipient,
+      quoteMint,
+      tokenQuoteProgram,
+    ),
+  ];
+
+  let ataTx: string | undefined;
+  const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
+  const createAtaTransaction = new Transaction().add(...createAtaIxs);
+  ataTx = await provider.sendAndConfirm(createAtaTransaction);
+
+  const sig: string = await programMethods(program)
+    .adminSweepClaimer()
+    .accounts({
+      admin: wallet.publicKey,
+      pool,
+      claimer,
+      claimerState,
+      claimerPendingBaseVault,
+      claimerPendingQuoteVault,
+      baseMint,
+      quoteMint,
+      destinationBaseAta,
+      destinationQuoteAta,
+      tokenBaseProgram,
+      tokenQuoteProgram,
+    })
+    .rpc();
+
+  return { tx: sig, link: solscanLink(sig, params.network), ataTx };
 }
 
 // ─── Non-Admin: Claim DBC Partner Trading Fee ─────────────────────────────────
@@ -796,19 +1086,13 @@ export async function distributeFees(
     ataTx = await provider.sendAndConfirm(createAtaTransaction);
   }
 
-  const remainingAccounts = onchainPoolState.claimerAddresses.flatMap(
-    (claimerAddr: PublicKey) => [
-      {
-        pubkey: getAssociatedTokenAddressSync(baseMint, claimerAddr, false, baseTokenProgram),
-        isSigner: false,
-        isWritable: true,
-      },
-      {
-        pubkey: getAssociatedTokenAddressSync(quoteMint, claimerAddr, false, quoteTokenProgram),
-        isSigner: false,
-        isWritable: true,
-      },
-    ],
+  const remainingAccounts = buildDistributeFeesRemainingAccounts(
+    pool,
+    onchainPoolState.claimerAddresses as PublicKey[],
+    baseMint,
+    quoteMint,
+    baseTokenProgram,
+    quoteTokenProgram,
   );
 
   const sig: string = await programMethods(program)

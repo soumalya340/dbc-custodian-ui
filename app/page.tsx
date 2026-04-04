@@ -6,10 +6,13 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Providers, getRpcEndpoint } from '@/app/providers';
 import {
   viewPoolClaimers,
+  viewClaimerPoolInfo,
   viewFeeVaultBalances,
   viewVaultAllTokenInfo,
-  setPoolClaimers,
+  initializePoolClaimers,
   updateClaimersBps,
+  setClaimerEnabled,
+  adminSweepClaimer,
   claimDbcPartnerFee,
   claimDammV2PositionFee,
   distributeFees,
@@ -25,7 +28,7 @@ interface FieldDef {
   name: string;
   label: string;
   placeholder?: string;
-  type?: 'text' | 'number' | 'select' | 'textarea' | 'claimers';
+  type?: 'text' | 'number' | 'select' | 'textarea' | 'claimers' | 'claimers_live';
   options?: { label: string; value: string }[];
   hint?: string;
 }
@@ -71,6 +74,18 @@ const VIEW_FUNCTIONS: FunctionDef[] = [
     description: 'Derive the vault pubkey and fetch all DAMM v2 position NFTs currently held by that vault, including pool/token info and unclaimed fees.',
     fields: [],
     submitLabel: 'Fetch Vault Token Info',
+  },
+  {
+    id: 'view_claimer_pool_info',
+    number: '1D',
+    title: 'Claimer Pool Info',
+    description:
+      'Fetch the on-chain ClaimerState PDA for a pool + claimer — enabled flag and cumulative claimed base/quote (excludes bump).',
+    fields: [
+      { name: 'pool_address', label: 'Pool Address', placeholder: 'Pool pubkey (DBC or DAMM v2)' },
+      { name: 'claimer_address', label: 'Claimer Address', placeholder: 'Claimer wallet pubkey' },
+    ],
+    submitLabel: 'Fetch Claimer Pool Info',
   },
 ];
 
@@ -159,17 +174,68 @@ const ADMIN_FUNCTIONS: FunctionDef[] = [
     id: 'update_claimers_bps',
     number: '3B',
     title: 'Update Claimers BPS',
-    description: 'Admin-only. Update the BPS (fee share) for existing claimers on a pool without resetting claimed amounts.',
+    description: 'Admin-only. Fetch the current claimers and BPS for a pool, then update the splits without resetting claimed amounts. Total BPS must sum to 10,000.',
     fields: [
       { name: 'pool_address', label: 'Pool Address', placeholder: 'Pool pubkey (DBC or DAMM v2)' },
       {
         name: 'claimers_json',
         label: 'Claimers',
-        type: 'claimers',
+        type: 'claimers_live',
         hint: 'Total BPS must sum to 10,000.',
       },
     ],
     submitLabel: 'Update BPS',
+  },
+  {
+    id: 'admin_locked_amount_withdraw',
+    number: '3C',
+    title: 'ADMIN LOCKED AMOUNT WITHDRAW',
+    description:
+      'Admin-only. Moves tokens from a registered claimer’s pending vaults (locked amounts, e.g. after distributeFees parked funds for a disabled claimer) into the recipient’s base and quote ATAs. Creates recipient ATAs if needed, then sweeps.',
+    fields: [
+      { name: 'pool_address', label: 'Pool Address', placeholder: 'Pool pubkey (DBC or DAMM v2)' },
+      {
+        name: 'mode',
+        label: 'Pool Mode',
+        type: 'select',
+        options: [
+          { label: 'DBC', value: 'dbc' },
+          { label: 'DAMM v2', value: 'damm-v2' },
+        ],
+      },
+      {
+        name: 'claimer_address',
+        label: 'Claimer Address',
+        placeholder: 'Registered claimer pubkey (pending vault owner)',
+      },
+      {
+        name: 'recipient_address',
+        label: 'Recipient Address',
+        placeholder: 'Wallet that receives the swept tokens (destination ATAs)',
+      },
+    ],
+    submitLabel: 'ADMIN LOCKED AMOUNT WITHDRAW',
+  },
+  {
+    id: 'set_claimer_status',
+    number: '3D',
+    title: 'Set Claim Status',
+    description:
+      'Admin-only. Enables or disables a claimer for live distribute_fees payouts (disabled claimers receive fees into pending vaults instead).',
+    fields: [
+      { name: 'pool_address', label: 'Pool Address', placeholder: 'Pool pubkey (DBC or DAMM v2)' },
+      { name: 'claimer_address', label: 'Claimer Address', placeholder: 'Claimer wallet pubkey' },
+      {
+        name: 'enabled',
+        label: 'Status',
+        type: 'select',
+        options: [
+          { label: 'Enabled', value: 'true' },
+          { label: 'Disabled', value: 'false' },
+        ],
+      },
+    ],
+    submitLabel: 'Set Claim Status',
   },
 ];
 
@@ -185,7 +251,7 @@ const SECTION_STYLE: Record<SectionId, { badge: string; accent: string; glow: st
 
 const REQUIRES_WALLET = new Set([
   'create_config_and_pool', 'claim_dbc_fee', 'claim_dammv2_fee', 'distribute_fees',
-  'set_pool_claimers', 'update_claimers_bps',
+  'set_pool_claimers', 'update_claimers_bps', 'admin_locked_amount_withdraw', 'set_claimer_status',
 ]);
 
 function formatResult(data: unknown): string {
@@ -314,6 +380,204 @@ function ClaimersInput({
   );
 }
 
+// ─── Claimers Live Input ─────────────────────────────────────────────────────
+// Fetches on-chain PoolClaimers state, shows current claimers as an editable
+// table, and lets the admin adjust BPS before submitting.
+
+function ClaimersLiveInput({
+  poolAddress,
+  value,
+  onChange,
+  accent,
+  connection,
+}: {
+  poolAddress: string;
+  value: string;
+  onChange: (json: string) => void;
+  accent: string;
+  connection: import('@solana/web3.js').Connection;
+}) {
+  const parseRows = (json: string): ClaimerRow[] => {
+    try {
+      const arr = JSON.parse(json);
+      if (Array.isArray(arr) && arr.length > 0) {
+        return arr.map((c: { address?: string; bps?: number }) => ({
+          address: c.address ?? '',
+          bps: c.bps != null ? String(c.bps) : '',
+        }));
+      }
+    } catch { /* ignore */ }
+    return [];
+  };
+
+  const [rows, setRows] = useState<ClaimerRow[]>(() => parseRows(value));
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [fetched, setFetched] = useState(false);
+
+  const syncToParent = (updated: ClaimerRow[]) => {
+    const arr = updated
+      .filter(r => r.address.trim() !== '')
+      .map(r => ({ address: r.address.trim(), bps: Number(r.bps) || 0 }));
+    onChange(JSON.stringify(arr));
+  };
+
+  const fetchClaimers = async () => {
+    if (!poolAddress.trim()) {
+      setFetchError('Enter a Pool Address above first.');
+      return;
+    }
+    setFetching(true);
+    setFetchError(null);
+    try {
+      const state = await viewPoolClaimers(connection, poolAddress.trim());
+      const loaded = state.claimers.map(c => ({ address: c.address, bps: String(c.bps) }));
+      setRows(loaded);
+      syncToParent(loaded);
+      setFetched(true);
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const updateRow = (idx: number, key: keyof ClaimerRow, val: string) => {
+    const updated = rows.map((r, i) => (i === idx ? { ...r, [key]: val } : r));
+    setRows(updated);
+    syncToParent(updated);
+  };
+
+  const totalBps = rows.reduce((sum, r) => sum + (Number(r.bps) || 0), 0);
+  const isValid = totalBps === 10000;
+
+  return (
+    <div className="sm:col-span-2 space-y-3">
+      {/* Fetch button */}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={fetchClaimers}
+          disabled={fetching}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ background: accent + '22', color: accent, border: `1px solid ${accent}55` }}
+        >
+          {fetching ? (
+            <>
+              <span className="inline-block w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />
+              Fetching...
+            </>
+          ) : fetched ? 'Re-fetch Current Claimers' : 'Fetch Current Claimers'}
+        </button>
+        {fetched && !fetching && (
+          <span className="text-xs text-slate-400">{rows.length} claimer{rows.length !== 1 ? 's' : ''} loaded</span>
+        )}
+      </div>
+
+      {fetchError && (
+        <div className="text-xs text-red-400 px-3 py-2 rounded-lg" style={{ background: '#1a0a0a', border: '1px solid #7f1d1d' }}>
+          {fetchError}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <>
+          {/* Table header */}
+          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #2a2a40' }}>
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ background: '#161626', borderBottom: '1px solid #2a2a40' }}>
+                  <th className="px-3 py-2 text-left font-medium text-slate-400 w-6">#</th>
+                  <th className="px-3 py-2 text-left font-medium text-slate-400">Claimer Address</th>
+                  <th className="px-3 py-2 text-right font-medium text-slate-400 w-28">BPS (0–10000)</th>
+                  <th className="px-3 py-2 text-right font-medium text-slate-400 w-16">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, idx) => {
+                  const bpsNum = Number(row.bps) || 0;
+                  const pct = (bpsNum / 100).toFixed(2);
+                  const bpsInvalid = bpsNum < 0 || bpsNum > 10000;
+                  return (
+                    <tr
+                      key={idx}
+                      style={{
+                        borderBottom: idx < rows.length - 1 ? '1px solid #1e1e30' : 'none',
+                        background: idx % 2 === 0 ? '#0e0e1a' : '#0a0a16',
+                      }}
+                    >
+                      <td className="px-3 py-2 text-slate-500 font-mono">{idx + 1}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className="font-mono text-slate-300 text-xs"
+                          title={row.address}
+                        >
+                          {row.address.slice(0, 8)}...{row.address.slice(-8)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          max={10000}
+                          value={row.bps}
+                          onChange={e => updateRow(idx, 'bps', e.target.value)}
+                          className="w-full rounded px-2 py-1 text-right text-white font-mono text-xs"
+                          style={{
+                            background: '#161626',
+                            border: `1px solid ${bpsInvalid ? '#dc2626' : '#2a2a40'}`,
+                          }}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono" style={{ color: accent }}>
+                        {pct}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: '#161626', borderTop: '1px solid #2a2a40' }}>
+                  <td colSpan={2} className="px-3 py-2 text-xs text-slate-400 font-semibold">Total</td>
+                  <td className="px-3 py-2 text-right font-mono font-bold" style={{ color: isValid ? '#4ade80' : '#f87171' }}>
+                    {totalBps.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-xs" style={{ color: isValid ? '#4ade80' : '#f87171' }}>
+                    {(totalBps / 100).toFixed(2)}%
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* BPS validity badge */}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500">Edit BPS per row — must total exactly 10,000</span>
+            <span
+              className="text-xs font-mono font-semibold px-2 py-1 rounded-lg"
+              style={{
+                background: isValid ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+                color: isValid ? '#4ade80' : '#f87171',
+                border: `1px solid ${isValid ? '#16a34a44' : '#dc262644'}`,
+              }}
+            >
+              {isValid ? '✓ 10,000 / 10,000' : `${totalBps.toLocaleString()} / 10,000`}
+            </span>
+          </div>
+        </>
+      )}
+
+      {rows.length === 0 && !fetching && fetched && (
+        <p className="text-xs text-slate-500 italic">No claimers found for this pool.</p>
+      )}
+
+      {rows.length === 0 && !fetched && (
+        <p className="text-xs text-slate-500 italic">Click &quot;Fetch Current Claimers&quot; to load the on-chain state.</p>
+      )}
+    </div>
+  );
+}
+
 // ─── Accordion Item ───────────────────────────────────────────────────────────
 
 function AccordionItem({
@@ -360,6 +624,8 @@ function AccordionItem({
         data = await viewFeeVaultBalances(connection, values.pool_address, values.base_mint, values.quote_mint);
       } else if (fn.id === 'view_vault_all_token_info') {
         data = await viewVaultAllTokenInfo(connection);
+      } else if (fn.id === 'view_claimer_pool_info') {
+        data = await viewClaimerPoolInfo(connection, values.pool_address, values.claimer_address);
       }
 
       // ── Non-Admin ──
@@ -410,7 +676,7 @@ function AccordionItem({
         } catch {
           throw new Error('Invalid JSON in Claimers field. Expected: [{"address":"...","bps":5000},...]');
         }
-        const r = await setPoolClaimers(connection, anchorWallet!, {
+        const r = await initializePoolClaimers(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           mode: (values.mode ?? 'dbc') as 'dbc' | 'damm-v2',
           claimers,
@@ -427,6 +693,23 @@ function AccordionItem({
         const r = await updateClaimersBps(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           claimers,
+          network: net,
+        });
+        data = { tx: r.tx, solscan: r.link };
+      } else if (fn.id === 'admin_locked_amount_withdraw') {
+        const r = await adminSweepClaimer(connection, anchorWallet!, {
+          poolAddress: values.pool_address,
+          mode: (values.mode ?? 'dbc') as 'dbc' | 'damm-v2',
+          claimerAddress: values.claimer_address,
+          recipientAddress: values.recipient_address,
+          network: net,
+        });
+        data = { tx: r.tx, solscan: r.link, ataTx: r.ataTx };
+      } else if (fn.id === 'set_claimer_status') {
+        const r = await setClaimerEnabled(connection, anchorWallet!, {
+          poolAddress: values.pool_address,
+          claimerAddress: values.claimer_address,
+          isEnabled: values.enabled === 'true',
           network: net,
         });
         data = { tx: r.tx, solscan: r.link };
@@ -525,8 +808,16 @@ function AccordionItem({
           {/* Fields */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {fn.fields.map(field => (
-              <div key={field.name} className={field.type === 'textarea' || field.type === 'claimers' ? 'sm:col-span-2' : ''}>
-                {field.type === 'claimers' ? (
+              <div key={field.name} className={field.type === 'textarea' || field.type === 'claimers' || field.type === 'claimers_live' ? 'sm:col-span-2' : ''}>
+                {field.type === 'claimers_live' ? (
+                  <ClaimersLiveInput
+                    poolAddress={values.pool_address ?? ''}
+                    value={values[field.name] ?? '[]'}
+                    onChange={v => setValues(prev => ({ ...prev, [field.name]: v }))}
+                    accent={style.accent}
+                    connection={connection}
+                  />
+                ) : field.type === 'claimers' ? (
                   <ClaimersInput
                     value={values[field.name] ?? '[]'}
                     onChange={v => setValues(prev => ({ ...prev, [field.name]: v }))}
