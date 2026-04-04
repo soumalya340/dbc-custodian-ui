@@ -43,7 +43,9 @@ body {
   opacity: 0;
 }
 .accordion-content.open {
-  max-height: 800px;
+  max-height: min(90vh, 2400px);
+  overflow-x: hidden;
+  overflow-y: auto;
   opacity: 1;
 }
 
