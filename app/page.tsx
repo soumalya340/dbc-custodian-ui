@@ -890,8 +890,9 @@ function AccordionItem({
           {/* Result */}
           {result && (
             <div
-              className="rounded-lg px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed break-all"
+              className="rounded-lg px-4 py-3 text-xs font-mono whitespace-pre-wrap leading-relaxed break-all overflow-y-auto"
               style={{
+                maxHeight: '400px',
                 background: result.type === 'error' ? '#1a0a0a' : result.type === 'success' ? '#0a1a0a' : '#0a0a1a',
                 border: `1px solid ${result.type === 'error' ? '#7f1d1d' : result.type === 'success' ? '#14532d' : '#1e3a5f'}`,
                 color: result.type === 'error' ? '#fca5a5' : result.type === 'success' ? '#86efac' : '#93c5fd',
