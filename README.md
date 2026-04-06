@@ -59,25 +59,48 @@ The UI groups functions into three sections, each color-coded.
 
 | # | Function | Code Reference |
 |---|---|---|
-| 1A | View Pool Info | [`viewPoolClaimers`](lib/custodian.tsx#L138) |
-| 1B | View Fee Vault Balances | [`viewFeeVaultBalances`](lib/custodian.tsx#L250) |
-| 1C | Vault All Token Info | [`viewVaultAllTokenInfo`](lib/custodian.tsx#L357) |
+| 1A | View Pool Info | [`viewPoolClaimers`](lib/custodian.tsx#L215) |
+| 1B | View Fee Vault Balances | [`viewFeeVaultBalances`](lib/custodian.tsx#L383) |
+| 1C | Vault All Token Info | [`viewVaultAllTokenInfo`](lib/custodian.tsx#L490) |
+| 1D | Claimer Pool Info | [`viewClaimerPoolInfo`](lib/custodian.tsx#L276) |
 
 ### Non-Admin (Violet) — Permissionless, wallet required
 
 | # | Function | Code Reference |
 |---|---|---|
-| 2A | Create Config & Pool | [`createConfigAndPool`](lib/createConfigAndPool.tsx#L37) |
-| 2B | Claim DBC Partner Trading Fee | [`claimDbcPartnerFee`](lib/custodian.tsx#L504) |
-| 2C | Claim DAMM v2 Position Fee | [`claimDammV2PositionFee`](lib/custodian.tsx#L670) |
-| 2D | Distribute Fees | [`distributeFees`](lib/custodian.tsx#L734) |
+| 2A | Create Config & Pool | [`createConfigAndPool`](lib/createConfigAndPool.tsx#L37) — new DBC config + pool; see below |
+| 2B | Claim DBC Partner Trading Fee | [`claimDbcPartnerFee`](lib/custodian.tsx#L794) |
+| 2C | Claim DAMM v2 Position Fee | [`claimDammV2PositionFee`](lib/custodian.tsx#L960) |
+| 2D | Distribute Fees | [`distributeFees`](lib/custodian.tsx#L1047) |
 
 ### Admin (Rose) — Admin wallet only
 
 | # | Function | Code Reference |
 |---|---|---|
-| 3A | Set Pool Claimers | [`setPoolClaimers`](lib/custodian.tsx#L442) |
-| 3B | Update Claimers BPS | [`updateClaimersBps`](lib/custodian.tsx#L474) |
+| 3A | Set Pool Claimers | [`initializePoolClaimers`](lib/custodian.tsx#L575) |
+| 3B | Update Claimers BPS | [`updateClaimersBps`](lib/custodian.tsx#L636) |
+| 3C | Admin Locked Amount Withdraw | [`adminSweepClaimer`](lib/custodian.tsx#L695) |
+| 3D | Set Claim Status | [`setClaimerEnabled`](lib/custodian.tsx#L665) |
+
+#### 2A — Create Config & Pool (details)
+
+Creates a new **DBC config** and **DBC pool** in one flow. Config and base mint keypairs are generated automatically ([`lib/createConfigAndPool.tsx`](lib/createConfigAndPool.tsx)). The UI asks for **Migration Quote Threshold (SOL)**, **Token Name**, **Token Symbol**, and **Token URI**. The custodian `feeClaimer` PDA is wired in during pool creation as documented above.
+
+#### 1D — Claimer Pool Info (details)
+
+Read-only. Loads the **`ClaimerState`** PDA for a given **pool** and **claimer** wallet: **`isEnabled`**, **`claimedBase`**, **`claimedQuote`** ([`viewClaimerPoolInfo`](lib/custodian.tsx#L276)). Use this to confirm a claimer is enabled for live payouts or to inspect cumulative claimed amounts per claimer (complements **1A**, which lists all claimers on the pool).
+
+#### 3C — Admin Locked Amount Withdraw (details)
+
+Admin-only. Sweeps tokens from a registered claimer’s **pending base / pending quote** vaults into a **recipient**’s ATAs. Pending vaults hold funds that were **parked** during **`distributeFees`** when a claimer cannot receive directly (for example, a **disabled** claimer per **3D**). The program may send a first transaction to create the recipient’s ATAs, then the sweep ([`adminSweepClaimer`](lib/custodian.tsx#L695)). Inputs: **pool**, **DBC / DAMM v2** mode, **claimer** (registered pubkey whose pending vaults are swept), **recipient** (destination wallet).
+
+#### 3D — Set Claim Status (details)
+
+Admin-only. Sets **`isEnabled`** on a claimer’s **`ClaimerState`**. **Enabled** claimers receive their BPS share from fee vaults into their **ATAs** during **`distributeFees`**. **Disabled** claimers have their share routed to **pending** vaults instead; an admin can later move those tokens with **3C** ([`setClaimerEnabled`](lib/custodian.tsx#L665)).
+
+#### 2D — Distribute Fees (details)
+
+Permissionless. Proportionally splits **base** and **quote** fee vault balances to registered claimers by BPS ([`distributeFees`](lib/custodian.tsx#L1047)). The implementation may use **two transactions**: first, idempotent creation of **claimer ATAs** if any are missing (`ataTx` in the UI result); second, **`distributeFees`** with **remaining accounts** per claimer (claimer state, pending vaults, claimer ATAs). Claimers who are **disabled** do not receive to ATAs in the same way; their share accrues in **pending** vaults for **3C**.
 
 ---
 
@@ -119,8 +142,8 @@ export function derivePoolClaimersPda(pool: PublicKey): PublicKey {
 > Permissionless. Can be called by anyone after fees have been claimed into the vaults.
 
 - Enter the pool address and select **DBC** as pool mode.
-- Proportionally distributes all fee vault balances to registered claimers based on their BPS.
-- If claimer ATAs do not exist yet, a setup transaction runs first, then the distribution.
+- Proportionally distributes fee vault balances to registered claimers by BPS. **Enabled** claimers receive to their ATAs; **disabled** claimers (see **3D**) accrue into **pending** vaults instead.
+- If any claimer ATAs are missing, the UI may confirm an **ATA creation** transaction first, then **`distributeFees`** (see **2D** details above).
 
 ### Optional — View & Verify
 
@@ -128,6 +151,7 @@ Use the read-only functions at any time to inspect state:
 
 - **1A** — Check which claimers are registered and their BPS for a pool.
 - **1B** — Check the current balance of fee vaults before or after claiming.
+- **1D** — Inspect a single claimer’s **`ClaimerState`** (enabled flag and cumulative claimed base/quote).
 
 ---
 
@@ -139,7 +163,7 @@ DAMM v2 is more involved than DBC. When a DBC pool migrates, it becomes a DAMM v
 
 Call **1C — Vault All Token Info** (no inputs needed).
 
-This scans all token accounts owned by the `fee_claimer` PDA, identifies LP position NFTs by filtering for NFTs with `decimals = 0` and `amount = 1`, then resolves each position's pool, token mints, and unclaimed fees ([`lib/custodian.tsx:357`](lib/custodian.tsx#L357)).
+This scans all token accounts owned by the `fee_claimer` PDA, identifies LP position NFTs by filtering for NFTs with `decimals = 0` and `amount = 1`, then resolves each position's pool, token mints, and unclaimed fees ([`viewVaultAllTokenInfo`](lib/custodian.tsx#L490)).
 
 Example response:
 
@@ -176,10 +200,7 @@ Example response:
 }
 ```
 
-Pick the pool you want to work with and note down two values:
-
-- **`pool`** — needed for steps 2 and 4.
-- **`positionNftMint`** — needed for step 3.
+Pick the pool you want to work with and note **`pool`** — it is used for **3A**, **2C** (claim), and **2D** (distribute). **`positionNftMint`** remains useful for cross-checking which NFT belongs to which row in **1C**.
 
 ### Step 2 — Initialize Pool Claimers (3A)
 
@@ -198,19 +219,16 @@ Example pool address to use: `DhYAVozRqXJiWrquTh5TzqGsdQRPY9hPPUYi9HmRuLZE`
 
 Call **2C — Claim DAMM v2 Position Fee**.
 
-- Paste the `positionNftMint` from the 1C response for the position you want to claim.
-- The function resolves everything else (pool, position, vaults, token programs) on-chain automatically ([`lib/custodian.tsx:670`](lib/custodian.tsx#L670)).
-- Fees flow from the DAMM v2 pool position into the program's fee vaults.
-
-Example NFT mint to paste: `GCJxyACE9N5XHSJAh4wZcE5n1qBopdtnf6qytP6pwtrN`
+- Enter the **DAMM v2 pool address** (the same `pool` value from **1C** for that position). The custodian vault’s position NFT for that pool is resolved automatically ([`claimDammV2PositionFee`](lib/custodian.tsx#L960)).
+- Fees flow from the DAMM v2 position into the program’s fee vaults.
 
 ### Step 4 — Distribute Fees (2D)
 
-> Permissionless. Identical to the DBC distribute step.
+> Permissionless. Same behavior as the DBC distribute step (ATA setup may precede **`distributeFees`**; **3D** / pending vaults apply as in **2D** details).
 
 - Enter the pool address (same `pool` from 1C).
 - Select **DAMM v2** as pool mode.
-- Fee vault balances are split proportionally to all claimers.
+- Fee vault balances are split per BPS to **enabled** claimers; **disabled** claimers use **pending** vaults (**3C** / **3D**).
 
 ---
 
@@ -223,6 +241,9 @@ All PDAs are derived inside [`lib/custodian.tsx`](lib/custodian.tsx):
 | `fee_claimer` | `["fee_claimer"]` | Vault authority — holds position NFTs, signs fee claims |
 | `pool_claimers` | `["pool_claimers", pool]` | Per-pool claimer registry with BPS splits |
 | `fee_vault` | `["fee_vault", pool, mint]` | Per-pool per-token fee accumulator vault |
+| `claimer_state` | `["claimer_state", pool, claimer]` | Per-claimer flags and cumulative claimed amounts |
+| `claimer_pending_base` | `["claimer_pending_base", pool, claimer]` | Pending base token balance for a claimer (e.g. disabled payout) |
+| `claimer_pending_quote` | `["claimer_pending_quote", pool, claimer]` | Pending quote token balance for a claimer |
 
 ---
 
