@@ -16,6 +16,8 @@ import {
   claimDbcPartnerFee,
   claimDammV2PositionFee,
   distributeFees,
+  claimAndDistributeFeesDbc,
+  claimAndDistributeFeesDammV2,
 } from '@/lib/custodian';
 import { createConfigAndPool } from '@/lib/createConfigAndPool';
 
@@ -142,6 +144,26 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
     ],
     submitLabel: 'Distribute Fees',
   },
+  {
+    id: 'claim_and_distribute_dbc',
+    number: '2E',
+    title: 'Claim + Distribute DBC Fees (One Tx)',
+    description: 'One-shot for end users — claims DBC partner trading fees, creates any missing claimer ATAs, and distributes to all registered claimers in a single transaction (single wallet signature).',
+    fields: [
+      { name: 'pool_address', label: 'DBC Pool Address', placeholder: 'DBC pool pubkey' },
+    ],
+    submitLabel: 'Claim + Distribute (DBC)',
+  },
+  {
+    id: 'claim_and_distribute_dammv2',
+    number: '2F',
+    title: 'Claim + Distribute DAMM v2 Fees (One Tx)',
+    description: 'One-shot for end users — claims DAMM v2 LP position fees into the vault, creates any missing claimer ATAs, and distributes to all registered claimers in a single transaction (single wallet signature).',
+    fields: [
+      { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
+    ],
+    submitLabel: 'Claim + Distribute (DAMM v2)',
+  },
 ];
 
 const ADMIN_FUNCTIONS: FunctionDef[] = [
@@ -251,6 +273,7 @@ const SECTION_STYLE: Record<SectionId, { badge: string; accent: string; glow: st
 
 const REQUIRES_WALLET = new Set([
   'create_config_and_pool', 'claim_dbc_fee', 'claim_dammv2_fee', 'distribute_fees',
+  'claim_and_distribute_dbc', 'claim_and_distribute_dammv2',
   'set_pool_claimers', 'update_claimers_bps', 'admin_locked_amount_withdraw', 'set_claimer_status',
 ]);
 
@@ -666,6 +689,20 @@ function AccordionItem({
           network: net,
         });
         data = { tx: r.tx, solscan: r.link, ataTx: r.ataTx };
+      } else if (fn.id === 'claim_and_distribute_dbc') {
+        const r = await claimAndDistributeFeesDbc(connection, anchorWallet!, {
+          poolAddress: values.pool_address,
+          network: net,
+          sendTransaction,
+        });
+        data = { tx: r.tx, solscan: r.link };
+      } else if (fn.id === 'claim_and_distribute_dammv2') {
+        const r = await claimAndDistributeFeesDammV2(connection, anchorWallet!, {
+          poolAddress: values.pool_address,
+          network: net,
+          sendTransaction,
+        });
+        data = { tx: r.tx, solscan: r.link };
       }
 
       // ── Admin ──

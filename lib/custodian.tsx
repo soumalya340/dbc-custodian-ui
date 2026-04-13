@@ -1137,3 +1137,281 @@ export async function distributeFees(
 
   return { tx: sig, link: solscanLink(sig, params.network), ataTx };
 }
+
+// ─── Non-Admin: Claim + Distribute Fees in one transaction ────────────────────
+
+export async function claimAndDistributeFeesDbc(
+  connection: Connection,
+  wallet: AnchorWallet,
+  params: {
+    poolAddress: string;
+    network: 'devnet' | 'mainnet';
+    sendTransaction?: (
+      tx: Transaction,
+      connection: Connection,
+      options?: { skipPreflight?: boolean; maxRetries?: number },
+    ) => Promise<string>;
+  },
+): Promise<{ tx: string; link: string }> {
+  const program = createProgram(wallet, connection);
+  const client = new DynamicBondingCurveClient(connection, 'confirmed');
+  const pool = new PublicKey(params.poolAddress);
+
+  const poolAccountInfo = await connection.getAccountInfo(pool, 'confirmed');
+  if (!poolAccountInfo) throw new Error(`Pool account not found: ${pool.toBase58()}`);
+  if (!poolAccountInfo.owner.equals(DBC_PROGRAM_ID)) {
+    throw new Error(
+      `Invalid pool address for DBC. Expected owner ${DBC_PROGRAM_ID.toBase58()} but got ${poolAccountInfo.owner.toBase58()}.`,
+    );
+  }
+
+  const dbcPoolState = await client.state.getPool(pool);
+  const baseMint = dbcPoolState.baseMint;
+  const quoteMint = WSOL_MINT;
+  const baseTokenProgram = TOKEN_2022_PROGRAM_ID;
+  const quoteTokenProgram = TOKEN_PROGRAM_ID;
+
+  const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
+  const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, baseMint, quoteMint);
+  const feeClaimerPda = deriveFeeClaimerPda();
+
+  const claimIx = await programMethods(program)
+    .claimPartnerTradingFee(
+      new BN('18446744073709551615'),
+      new BN('18446744073709551615'),
+    )
+    .accounts({
+      poolAuthority: dbcPoolAuthority,
+      config: dbcPoolState.config,
+      pool,
+      poolClaimers: poolClaimersPdaPubKey,
+      baseFeeVault,
+      quoteFeeVault,
+      basePoolVault: dbcPoolState.baseVault,
+      quotePoolVault: dbcPoolState.quoteVault,
+      baseMint,
+      quoteMint,
+      feeClaimer: feeClaimerPda,
+      tokenBaseProgram: baseTokenProgram,
+      tokenQuoteProgram: quoteTokenProgram,
+      eventAuthority: dbcEventAuthority,
+      dbcProgram: DBC_PROGRAM_ID,
+      payer: wallet.publicKey,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onchainPoolState: any = await (program.account as any).poolClaimers.fetch(poolClaimersPdaPubKey);
+  const claimerAddresses = onchainPoolState.claimerAddresses as PublicKey[];
+
+  const createAtaIxs = claimerAddresses.flatMap((claimerAddr) => [
+    createAssociatedTokenAccountIdempotentInstruction(
+      wallet.publicKey,
+      getAssociatedTokenAddressSync(baseMint, claimerAddr, false, baseTokenProgram),
+      claimerAddr,
+      baseMint,
+      baseTokenProgram,
+    ),
+    createAssociatedTokenAccountIdempotentInstruction(
+      wallet.publicKey,
+      getAssociatedTokenAddressSync(quoteMint, claimerAddr, false, quoteTokenProgram),
+      claimerAddr,
+      quoteMint,
+      quoteTokenProgram,
+    ),
+  ]);
+
+  const remainingAccounts = buildDistributeFeesRemainingAccounts(
+    pool,
+    claimerAddresses,
+    baseMint,
+    quoteMint,
+    baseTokenProgram,
+    quoteTokenProgram,
+  );
+
+  const distributeIx = await programMethods(program)
+    .distributeFees()
+    .accounts({
+      caller: wallet.publicKey,
+      pool,
+      poolClaimers: poolClaimersPdaPubKey,
+      baseFeeVault,
+      quoteFeeVault,
+      baseMint,
+      quoteMint,
+      feeClaimer: feeClaimerPda,
+      tokenBaseProgram: baseTokenProgram,
+      tokenQuoteProgram: quoteTokenProgram,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+
+  const tx = new Transaction().add(claimIx, ...createAtaIxs, distributeIx);
+  const latest = await connection.getLatestBlockhash('confirmed');
+  tx.recentBlockhash = latest.blockhash;
+  tx.feePayer = wallet.publicKey;
+
+  let sig: string;
+  if (params.sendTransaction) {
+    sig = await params.sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
+  } else {
+    const signedTx = await wallet.signTransaction(tx);
+    sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: false, maxRetries: 3 });
+  }
+  await connection.confirmTransaction(
+    { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+    'confirmed',
+  );
+
+  return { tx: sig, link: solscanLink(sig, params.network) };
+}
+
+export async function claimAndDistributeFeesDammV2(
+  connection: Connection,
+  wallet: AnchorWallet,
+  params: {
+    poolAddress: string;
+    network: 'devnet' | 'mainnet';
+    sendTransaction?: (
+      tx: Transaction,
+      connection: Connection,
+      options?: { skipPreflight?: boolean; maxRetries?: number },
+    ) => Promise<string>;
+  },
+): Promise<{ tx: string; link: string }> {
+  const program = createProgram(wallet, connection);
+  const cpAmm = new CpAmm(connection);
+  const pool = new PublicKey(params.poolAddress);
+  const vault = deriveFeeClaimerPda();
+
+  const [legacyTokenAccounts, token2022Accounts] = await Promise.all([
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_PROGRAM_ID }),
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_2022_PROGRAM_ID }),
+  ]);
+  const allTokenAccounts = [...legacyTokenAccounts.value, ...token2022Accounts.value];
+  const nftCandidates = allTokenAccounts.filter((acc) => isLikelyPositionNftAccount(acc.account));
+
+  let nftMintPk: PublicKey | null = null;
+  let position: PublicKey | null = null;
+  let positionNftAccount: PublicKey | null = null;
+  for (const acc of nftCandidates) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mintStr = (acc.account.data as any).parsed.info.mint as string;
+    const candidateMint = new PublicKey(mintStr);
+    const candidatePosition = derivePositionAddress(candidateMint);
+    const positionInfo = await connection.getAccountInfo(candidatePosition);
+    if (!positionInfo) continue;
+    const positionState = await cpAmm.fetchPositionState(candidatePosition);
+    if (positionState.pool.equals(pool)) {
+      nftMintPk = candidateMint;
+      position = candidatePosition;
+      positionNftAccount = derivePositionNftAccount(candidateMint);
+      break;
+    }
+  }
+  if (!nftMintPk || !position || !positionNftAccount) {
+    throw new Error(`No vault-owned position found for DAMM v2 pool ${params.poolAddress}`);
+  }
+
+  const poolState = await cpAmm.fetchPoolState(pool);
+  const baseMint = poolState.tokenAMint;
+  const quoteMint = poolState.tokenBMint;
+  const baseTokenProgram = getTokenProgram(poolState.tokenAFlag);
+  const quoteTokenProgram = getTokenProgram(poolState.tokenBFlag);
+  const poolAuthority = derivePoolAuthority();
+  const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
+  const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, baseMint, quoteMint);
+  const feeClaimerPda = deriveFeeClaimerPda();
+  const cpAmmEventAuthority = deriveCpAmmEventAuthority(DAMMV2_PROGRAM_ID);
+
+  const claimIx = await programMethods(program)
+    .claimPositionFee()
+    .accounts({
+      poolAuthority,
+      pool,
+      poolClaimers: poolClaimersPdaPubKey,
+      position,
+      baseFeeVault,
+      quoteFeeVault,
+      tokenAVault: poolState.tokenAVault,
+      tokenBVault: poolState.tokenBVault,
+      tokenAMint: baseMint,
+      tokenBMint: quoteMint,
+      positionNftAccount,
+      tokenAProgram: baseTokenProgram,
+      tokenBProgram: quoteTokenProgram,
+      eventAuthority: cpAmmEventAuthority,
+      cpAmmProgram: DAMMV2_PROGRAM_ID,
+      payer: wallet.publicKey,
+      feeClaimer: feeClaimerPda,
+    })
+    .instruction();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onchainPoolState: any = await (program.account as any).poolClaimers.fetch(poolClaimersPdaPubKey);
+  const claimerAddresses = onchainPoolState.claimerAddresses as PublicKey[];
+
+  const createAtaIxs = claimerAddresses.flatMap((claimerAddr) => [
+    createAssociatedTokenAccountIdempotentInstruction(
+      wallet.publicKey,
+      getAssociatedTokenAddressSync(baseMint, claimerAddr, false, baseTokenProgram),
+      claimerAddr,
+      baseMint,
+      baseTokenProgram,
+    ),
+    createAssociatedTokenAccountIdempotentInstruction(
+      wallet.publicKey,
+      getAssociatedTokenAddressSync(quoteMint, claimerAddr, false, quoteTokenProgram),
+      claimerAddr,
+      quoteMint,
+      quoteTokenProgram,
+    ),
+  ]);
+
+  const remainingAccounts = buildDistributeFeesRemainingAccounts(
+    pool,
+    claimerAddresses,
+    baseMint,
+    quoteMint,
+    baseTokenProgram,
+    quoteTokenProgram,
+  );
+
+  const distributeIx = await programMethods(program)
+    .distributeFees()
+    .accounts({
+      caller: wallet.publicKey,
+      pool,
+      poolClaimers: poolClaimersPdaPubKey,
+      baseFeeVault,
+      quoteFeeVault,
+      baseMint,
+      quoteMint,
+      feeClaimer: feeClaimerPda,
+      tokenBaseProgram: baseTokenProgram,
+      tokenQuoteProgram: quoteTokenProgram,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+
+  const tx = new Transaction().add(claimIx, ...createAtaIxs, distributeIx);
+  const latest = await connection.getLatestBlockhash('confirmed');
+  tx.recentBlockhash = latest.blockhash;
+  tx.feePayer = wallet.publicKey;
+
+  let sig: string;
+  if (params.sendTransaction) {
+    sig = await params.sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
+  } else {
+    const signedTx = await wallet.signTransaction(tx);
+    sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: false, maxRetries: 3 });
+  }
+  await connection.confirmTransaction(
+    { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+    'confirmed',
+  );
+
+  return { tx: sig, link: solscanLink(sig, params.network) };
+}

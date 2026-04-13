@@ -72,6 +72,8 @@ The UI groups functions into three sections, each color-coded.
 | 2B | Claim DBC Partner Trading Fee | [`claimDbcPartnerFee`](lib/custodian.tsx#L794) |
 | 2C | Claim DAMM v2 Position Fee | [`claimDammV2PositionFee`](lib/custodian.tsx#L960) |
 | 2D | Distribute Fees | [`distributeFees`](lib/custodian.tsx#L1047) |
+| 2E | Claim + Distribute DBC Fees (One Tx) | [`claimAndDistributeFeesDbc`](lib/custodian.tsx#L1141) |
+| 2F | Claim + Distribute DAMM v2 Fees (One Tx) | [`claimAndDistributeFeesDammV2`](lib/custodian.tsx#L1280) |
 
 ### Admin (Rose) — Admin wallet only
 
@@ -101,6 +103,28 @@ Admin-only. Sets **`isEnabled`** on a claimer’s **`ClaimerState`**. **Enabled*
 #### 2D — Distribute Fees (details)
 
 Permissionless. Proportionally splits **base** and **quote** fee vault balances to registered claimers by BPS ([`distributeFees`](lib/custodian.tsx#L1047)). The implementation may use **two transactions**: first, idempotent creation of **claimer ATAs** if any are missing (`ataTx` in the UI result); second, **`distributeFees`** with **remaining accounts** per claimer (claimer state, pending vaults, claimer ATAs). Claimers who are **disabled** do not receive to ATAs in the same way; their share accrues in **pending** vaults for **3C**.
+
+#### 2E — Claim + Distribute DBC Fees (One Tx) (details)
+
+Permissionless. End-user convenience function that combines **2B** and **2D** into a **single transaction requiring one wallet signature** ([`claimAndDistributeFeesDbc`](lib/custodian.tsx#L1141)).
+
+The single transaction contains, in order:
+1. `claimPartnerTradingFee` — sweeps accrued DBC partner fees into the program's fee vaults.
+2. Idempotent ATA creation instructions for each registered claimer (base + quote token accounts).
+3. `distributeFees` — proportionally splits vault balances to all enabled claimers by BPS.
+
+Input: **DBC pool address** only. The function validates the pool is owned by `DBC_PROGRAM_ID`, fetches on-chain pool and claimer state, builds all instructions, and sends as one atomic transaction. Disabled claimers still have their share routed to pending vaults (same behaviour as **2D** / **3D** / **3C**).
+
+#### 2F — Claim + Distribute DAMM v2 Fees (One Tx) (details)
+
+Permissionless. End-user convenience function that combines **2C** and **2D** into a **single transaction requiring one wallet signature** ([`claimAndDistributeFeesDammV2`](lib/custodian.tsx#L1280)).
+
+The single transaction contains, in order:
+1. `claimPositionFee` — claims LP position fees from the DAMM v2 pool into the program's fee vaults. The vault-owned position NFT for the supplied pool is resolved automatically (same logic as **2C**).
+2. Idempotent ATA creation instructions for each registered claimer (base + quote token accounts).
+3. `distributeFees` — proportionally splits vault balances to all enabled claimers by BPS.
+
+Input: **DAMM v2 pool address** only. Disabled claimers still have their share routed to pending vaults (same behaviour as **2D** / **3D** / **3C**).
 
 ---
 
