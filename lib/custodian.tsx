@@ -38,7 +38,7 @@ import { solscanLink } from './solscanLink';
 
 // ─── Program IDs ─────────────────────────────────────────────────────────────
 
-const MY_DBC_CUSTODIAN_PROGRAM_ID = new PublicKey(
+const MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID = new PublicKey(
   '2VgCjezWK4kHxoute1Jy986AXVPvSkwquPX5VBVwQMzV',
 );
 const DBC_PROGRAM_ID = new PublicKey(
@@ -56,7 +56,7 @@ const WSOL_MINT = new PublicKey(
 function derivePoolClaimersPda(pool: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('pool_claimers'), pool.toBuffer()],
-    MY_DBC_CUSTODIAN_PROGRAM_ID,
+    MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID,
   );
   return pda;
 }
@@ -64,7 +64,7 @@ function derivePoolClaimersPda(pool: PublicKey): PublicKey {
 export function deriveFeeClaimerPda(): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('fee_claimer')],
-    MY_DBC_CUSTODIAN_PROGRAM_ID,
+    MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID,
   );
   return pda;
 }
@@ -76,11 +76,11 @@ function derivePoolFeeVaults(
 ): { baseFeeVault: PublicKey; quoteFeeVault: PublicKey } {
   const [baseFeeVault] = PublicKey.findProgramAddressSync(
     [Buffer.from('fee_vault'), pool.toBuffer(), tokenAMint.toBuffer()],
-    MY_DBC_CUSTODIAN_PROGRAM_ID,
+    MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID,
   );
   const [quoteFeeVault] = PublicKey.findProgramAddressSync(
     [Buffer.from('fee_vault'), pool.toBuffer(), tokenBMint.toBuffer()],
-    MY_DBC_CUSTODIAN_PROGRAM_ID,
+    MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID,
   );
   return { baseFeeVault, quoteFeeVault };
 }
@@ -88,7 +88,7 @@ function derivePoolFeeVaults(
 function deriveClaimerStatePda(pool: PublicKey, claimer: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('claimer_state'), pool.toBuffer(), claimer.toBuffer()],
-    MY_DBC_CUSTODIAN_PROGRAM_ID,
+    MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID,
   );
   return pda;
 }
@@ -96,7 +96,7 @@ function deriveClaimerStatePda(pool: PublicKey, claimer: PublicKey): PublicKey {
 function deriveClaimerPendingBaseVault(pool: PublicKey, claimer: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('claimer_pending_base'), pool.toBuffer(), claimer.toBuffer()],
-    MY_DBC_CUSTODIAN_PROGRAM_ID,
+    MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID,
   );
   return pda;
 }
@@ -104,7 +104,7 @@ function deriveClaimerPendingBaseVault(pool: PublicKey, claimer: PublicKey): Pub
 function deriveClaimerPendingQuoteVault(pool: PublicKey, claimer: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('claimer_pending_quote'), pool.toBuffer(), claimer.toBuffer()],
-    MY_DBC_CUSTODIAN_PROGRAM_ID,
+    MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID,
   );
   return pda;
 }
@@ -203,6 +203,59 @@ async function resolveDammV2Position(
     }
   }
   return null;
+}
+
+type DbcPoolStateResolved = Awaited<
+  ReturnType<InstanceType<typeof DynamicBondingCurveClient>['state']['getPool']>
+>;
+type DammPoolStateResolved = Awaited<ReturnType<CpAmm['fetchPoolState']>>;
+
+type PoolTokensResolved =
+  | {
+      mode: 'dbc';
+      baseMint: PublicKey;
+      quoteMint: PublicKey;
+      tokenBaseProgram: PublicKey;
+      tokenQuoteProgram: PublicKey;
+      dbcPoolState: DbcPoolStateResolved;
+    }
+  | {
+      mode: 'damm-v2';
+      baseMint: PublicKey;
+      quoteMint: PublicKey;
+      tokenBaseProgram: PublicKey;
+      tokenQuoteProgram: PublicKey;
+      dammPoolState: DammPoolStateResolved;
+    };
+
+async function resolvePoolTokensByMode(
+  connection: Connection,
+  pool: PublicKey,
+  mode: 'dbc' | 'damm-v2',
+): Promise<PoolTokensResolved> {
+  if (mode === 'dbc') {
+    const client = new DynamicBondingCurveClient(connection, 'confirmed');
+    const dbcPoolState = await client.state.getPool(pool);
+    const dbcPoolConfig = await client.state.getPoolConfig(dbcPoolState.config);
+    return {
+      mode: 'dbc',
+      baseMint: dbcPoolState.baseMint,
+      quoteMint: dbcPoolConfig.quoteMint,
+      tokenBaseProgram: TOKEN_2022_PROGRAM_ID,
+      tokenQuoteProgram: getTokenProgram(dbcPoolConfig.quoteTokenFlag),
+      dbcPoolState,
+    };
+  }
+  const cpAmm = new CpAmm(connection);
+  const dammPoolState = await cpAmm.fetchPoolState(pool);
+  return {
+    mode: 'damm-v2',
+    baseMint: dammPoolState.tokenAMint,
+    quoteMint: dammPoolState.tokenBMint,
+    tokenBaseProgram: getTokenProgram(dammPoolState.tokenAFlag),
+    tokenQuoteProgram: getTokenProgram(dammPoolState.tokenBFlag),
+    dammPoolState,
+  };
 }
 
 // ─── ALT helpers ─────────────────────────────────────────────────────────────
@@ -728,36 +781,17 @@ export async function initializePoolClaimers(
   const bps = params.claimers.map((c) => c.bps);
   const poolStateArg = params.mode === 'dbc' ? { dbc: {} } : { dammV2: {} };
 
-  // Hoisted so they're accessible in the ALT creation block below
-  let baseMint: PublicKey;
-  let quoteMint: PublicKey;
-  let tokenBaseProgram: PublicKey;
-  let tokenQuoteProgram: PublicKey;
+  const poolTokens = await resolvePoolTokensByMode(connection, pool, params.mode);
+  const { baseMint, quoteMint, tokenBaseProgram, tokenQuoteProgram } = poolTokens;
 
-  // DBC-specific fields for ALT
-  let dbcPoolStateResolved: Awaited<
-    ReturnType<InstanceType<typeof DynamicBondingCurveClient>['state']['getPool']>
-  > | null = null;
-
-  // DAMM v2-specific fields for ALT
+  let dbcPoolStateResolved: DbcPoolStateResolved | null = null;
+  let dammPoolStateResolved: DammPoolStateResolved | null = null;
   let dammPositionResolved: { position: PublicKey; positionNftAccount: PublicKey } | null = null;
-  let dammPoolStateResolved: Awaited<ReturnType<CpAmm['fetchPoolState']>> | null = null;
 
-  if (params.mode === 'dbc') {
-    const client = new DynamicBondingCurveClient(connection, 'confirmed');
-    dbcPoolStateResolved = await client.state.getPool(pool);
-    baseMint = dbcPoolStateResolved.baseMint;
-    quoteMint = WSOL_MINT;
-    tokenBaseProgram = TOKEN_2022_PROGRAM_ID;
-    tokenQuoteProgram = TOKEN_PROGRAM_ID;
+  if (poolTokens.mode === 'dbc') {
+    dbcPoolStateResolved = poolTokens.dbcPoolState;
   } else {
-    const cpAmm = new CpAmm(connection);
-    dammPoolStateResolved = await cpAmm.fetchPoolState(pool);
-    baseMint = dammPoolStateResolved.tokenAMint;
-    quoteMint = dammPoolStateResolved.tokenBMint;
-    tokenBaseProgram = getTokenProgram(dammPoolStateResolved.tokenAFlag);
-    tokenQuoteProgram = getTokenProgram(dammPoolStateResolved.tokenBFlag);
-    // Resolve position for ALT — may be null if position hasn't been created yet
+    dammPoolStateResolved = poolTokens.dammPoolState;
     dammPositionResolved = await resolveDammV2Position(connection, pool);
   }
 
@@ -895,26 +929,11 @@ export async function adminSweepClaimer(
   const claimer = new PublicKey(params.claimerAddress);
   const recipient = new PublicKey(params.recipientAddress);
 
-  let baseMint: PublicKey;
-  let quoteMint: PublicKey;
-  let tokenBaseProgram: PublicKey;
-  let tokenQuoteProgram: PublicKey;
-
-  if (params.mode === 'dbc') {
-    const client = new DynamicBondingCurveClient(connection, 'confirmed');
-    const dbcPoolState = await client.state.getPool(pool);
-    baseMint = dbcPoolState.baseMint;
-    quoteMint = WSOL_MINT;
-    tokenBaseProgram = TOKEN_2022_PROGRAM_ID;
-    tokenQuoteProgram = TOKEN_PROGRAM_ID;
-  } else {
-    const cpAmm = new CpAmm(connection);
-    const poolState = await cpAmm.fetchPoolState(pool);
-    baseMint = poolState.tokenAMint;
-    quoteMint = poolState.tokenBMint;
-    tokenBaseProgram = getTokenProgram(poolState.tokenAFlag);
-    tokenQuoteProgram = getTokenProgram(poolState.tokenBFlag);
-  }
+  const { baseMint, quoteMint, tokenBaseProgram, tokenQuoteProgram } = await resolvePoolTokensByMode(
+    connection,
+    pool,
+    params.mode,
+  );
 
   const claimerState = deriveClaimerStatePda(pool, claimer);
   const claimerPendingBaseVault = deriveClaimerPendingBaseVault(pool, claimer);
@@ -1013,8 +1032,9 @@ export async function claimDbcPartnerFee(
       );
     }
 
+    const dbcPoolConfig2 = await client.state.getPoolConfig(dbcPoolState.config);
     const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
-    const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, dbcPoolState.baseMint, WSOL_MINT);
+    const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, dbcPoolState.baseMint, dbcPoolConfig2.quoteMint);
     const feeClaimerPda = deriveFeeClaimerPda();
 
     const builder = programMethods(program)
@@ -1032,10 +1052,10 @@ export async function claimDbcPartnerFee(
         basePoolVault: dbcPoolState.baseVault,
         quotePoolVault: dbcPoolState.quoteVault,
         baseMint: dbcPoolState.baseMint,
-        quoteMint: WSOL_MINT,
+        quoteMint: dbcPoolConfig2.quoteMint,
         feeClaimer: feeClaimerPda,
         tokenBaseProgram: TOKEN_2022_PROGRAM_ID,
-        tokenQuoteProgram: TOKEN_PROGRAM_ID,
+        tokenQuoteProgram: getTokenProgram(dbcPoolConfig2.quoteTokenFlag),
         eventAuthority: dbcEventAuthority,
         dbcProgram: DBC_PROGRAM_ID,
         payer: wallet.publicKey,
@@ -1148,28 +1168,11 @@ export async function distributeFees(
   },
 ): Promise<{ tx: string; link: string; ataTx?: string }> {
   const program = createProgram(wallet, connection);
-  const client = new DynamicBondingCurveClient(connection, 'confirmed');
-  const cpAmm = new CpAmm(connection);
   const pool = new PublicKey(params.poolAddress);
 
-  let baseMint: PublicKey;
-  let quoteMint: PublicKey;
-  let baseTokenProgram: PublicKey;
-  let quoteTokenProgram: PublicKey;
-
-  if (params.mode === 'dbc') {
-    const dbcPoolState = await client.state.getPool(pool);
-    baseMint = dbcPoolState.baseMint;
-    quoteMint = WSOL_MINT;
-    baseTokenProgram = TOKEN_2022_PROGRAM_ID;
-    quoteTokenProgram = TOKEN_PROGRAM_ID;
-  } else {
-    const poolState = await cpAmm.fetchPoolState(pool);
-    baseMint = poolState.tokenAMint;
-    quoteMint = poolState.tokenBMint;
-    baseTokenProgram = getTokenProgram(poolState.tokenAFlag);
-    quoteTokenProgram = getTokenProgram(poolState.tokenBFlag);
-  }
+  const poolTokens = await resolvePoolTokensByMode(connection, pool, params.mode);
+  const { baseMint, quoteMint, tokenBaseProgram: baseTokenProgram, tokenQuoteProgram: quoteTokenProgram } =
+    poolTokens;
 
   const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
   const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, baseMint, quoteMint);
@@ -1253,10 +1256,11 @@ export async function claimAndDistributeFeesDbc(
   }
 
   const dbcPoolState = await client.state.getPool(pool);
+  const dbcPoolConfig4 = await client.state.getPoolConfig(dbcPoolState.config);
   const baseMint = dbcPoolState.baseMint;
-  const quoteMint = WSOL_MINT;
+  const quoteMint = dbcPoolConfig4.quoteMint;
   const baseTokenProgram = TOKEN_2022_PROGRAM_ID;
-  const quoteTokenProgram = TOKEN_PROGRAM_ID;
+  const quoteTokenProgram = getTokenProgram(dbcPoolConfig4.quoteTokenFlag);
 
   const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
   const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, baseMint, quoteMint);
