@@ -6,7 +6,15 @@ if (typeof globalThis !== 'undefined' && !('Buffer' in globalThis)) {
   (globalThis as { Buffer?: typeof NodeBuffer }).Buffer = NodeBuffer;
 }
 
-import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import {
+  Connection,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  AddressLookupTableProgram,
+  VersionedTransaction,
+  TransactionMessage,
+} from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
@@ -26,26 +34,26 @@ import {
   getUnClaimLpFee,
 } from '@meteora-ag/cp-amm-sdk';
 
+import { solscanLink } from './solscanLink';
+
 // ─── Program IDs ─────────────────────────────────────────────────────────────
 
-export const MY_DBC_CUSTODIAN_PROGRAM_ID = new PublicKey(
+const MY_DBC_CUSTODIAN_PROGRAM_ID = new PublicKey(
   '2VgCjezWK4kHxoute1Jy986AXVPvSkwquPX5VBVwQMzV',
 );
-export const DBC_PROGRAM_ID = new PublicKey(
+const DBC_PROGRAM_ID = new PublicKey(
   'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN',
 );
-export const DAMMV2_PROGRAM_ID = new PublicKey(
+const DAMMV2_PROGRAM_ID = new PublicKey(
   'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG',
 );
-export const WSOL_MINT = new PublicKey(
+const WSOL_MINT = new PublicKey(
   'So11111111111111111111111111111111111111112',
 );
 
-import { solscanLink } from './solscanLink';
-
 // ─── PDA helpers ─────────────────────────────────────────────────────────────
 
-export function derivePoolClaimersPda(pool: PublicKey): PublicKey {
+function derivePoolClaimersPda(pool: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('pool_claimers'), pool.toBuffer()],
     MY_DBC_CUSTODIAN_PROGRAM_ID,
@@ -61,7 +69,7 @@ export function deriveFeeClaimerPda(): PublicKey {
   return pda;
 }
 
-export function derivePoolFeeVaults(
+function derivePoolFeeVaults(
   pool: PublicKey,
   tokenAMint: PublicKey,
   tokenBMint: PublicKey,
@@ -77,7 +85,7 @@ export function derivePoolFeeVaults(
   return { baseFeeVault, quoteFeeVault };
 }
 
-export function deriveClaimerStatePda(pool: PublicKey, claimer: PublicKey): PublicKey {
+function deriveClaimerStatePda(pool: PublicKey, claimer: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('claimer_state'), pool.toBuffer(), claimer.toBuffer()],
     MY_DBC_CUSTODIAN_PROGRAM_ID,
@@ -85,7 +93,7 @@ export function deriveClaimerStatePda(pool: PublicKey, claimer: PublicKey): Publ
   return pda;
 }
 
-export function deriveClaimerPendingBaseVault(pool: PublicKey, claimer: PublicKey): PublicKey {
+function deriveClaimerPendingBaseVault(pool: PublicKey, claimer: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('claimer_pending_base'), pool.toBuffer(), claimer.toBuffer()],
     MY_DBC_CUSTODIAN_PROGRAM_ID,
@@ -93,7 +101,7 @@ export function deriveClaimerPendingBaseVault(pool: PublicKey, claimer: PublicKe
   return pda;
 }
 
-export function deriveClaimerPendingQuoteVault(pool: PublicKey, claimer: PublicKey): PublicKey {
+function deriveClaimerPendingQuoteVault(pool: PublicKey, claimer: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('claimer_pending_quote'), pool.toBuffer(), claimer.toBuffer()],
     MY_DBC_CUSTODIAN_PROGRAM_ID,
@@ -101,14 +109,14 @@ export function deriveClaimerPendingQuoteVault(pool: PublicKey, claimer: PublicK
   return pda;
 }
 
-export type ClaimerRemainingAccountMeta = {
+type ClaimerRemainingAccountMeta = {
   pubkey: PublicKey;
   isSigner: boolean;
   isWritable: boolean;
 };
 
 /** Per claimer: [claimer_state_pda, pending_base_vault, pending_quote_vault] */
-export function buildInitClaimersRemainingAccounts(
+function buildInitClaimersRemainingAccounts(
   pool: PublicKey,
   claimers: PublicKey[],
 ): ClaimerRemainingAccountMeta[] {
@@ -120,7 +128,7 @@ export function buildInitClaimersRemainingAccounts(
 }
 
 /** Per claimer: [state, pending_base, pending_quote, base_ata, quote_ata] */
-export function buildDistributeFeesRemainingAccounts(
+function buildDistributeFeesRemainingAccounts(
   pool: PublicKey,
   claimers: PublicKey[],
   baseMint: PublicKey,
@@ -132,18 +140,8 @@ export function buildDistributeFeesRemainingAccounts(
     const claimerStatePda = deriveClaimerStatePda(pool, claimer);
     const pendingBaseVault = deriveClaimerPendingBaseVault(pool, claimer);
     const pendingQuoteVault = deriveClaimerPendingQuoteVault(pool, claimer);
-    const claimerBaseAta = getAssociatedTokenAddressSync(
-      baseMint,
-      claimer,
-      false,
-      baseTokenProgram,
-    );
-    const claimerQuoteAta = getAssociatedTokenAddressSync(
-      quoteMint,
-      claimer,
-      false,
-      quoteTokenProgram,
-    );
+    const claimerBaseAta = getAssociatedTokenAddressSync(baseMint, claimer, false, baseTokenProgram);
+    const claimerQuoteAta = getAssociatedTokenAddressSync(quoteMint, claimer, false, quoteTokenProgram);
     return [
       { pubkey: claimerStatePda, isSigner: false, isWritable: true },
       { pubkey: pendingBaseVault, isSigner: false, isWritable: true },
@@ -154,7 +152,7 @@ export function buildDistributeFeesRemainingAccounts(
   });
 }
 
-export function deriveCpAmmEventAuthority(cpAmmProgramId: PublicKey): PublicKey {
+function deriveCpAmmEventAuthority(cpAmmProgramId: PublicKey): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('__event_authority')],
     cpAmmProgramId,
@@ -162,14 +160,240 @@ export function deriveCpAmmEventAuthority(cpAmmProgramId: PublicKey): PublicKey 
   return pda;
 }
 
-export const [dbcPoolAuthority] = PublicKey.findProgramAddressSync(
+const [dbcPoolAuthority] = PublicKey.findProgramAddressSync(
   [Buffer.from('pool_authority')],
   DBC_PROGRAM_ID,
 );
-export const [dbcEventAuthority] = PublicKey.findProgramAddressSync(
+const [dbcEventAuthority] = PublicKey.findProgramAddressSync(
   [Buffer.from('__event_authority')],
   DBC_PROGRAM_ID,
 );
+
+// ─── DAMM v2 position resolver (shared helper) ───────────────────────────────
+
+/**
+ * Finds the vault-owned DAMM v2 position NFT for a given pool.
+ * Extracted as a shared helper to avoid duplication and to reuse in ALT creation.
+ */
+async function resolveDammV2Position(
+  connection: Connection,
+  pool: PublicKey,
+): Promise<{ position: PublicKey; positionNftAccount: PublicKey } | null> {
+  const cpAmm = new CpAmm(connection);
+  const vault = deriveFeeClaimerPda();
+
+  const [legacy, t22] = await Promise.all([
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_PROGRAM_ID }),
+    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_2022_PROGRAM_ID }),
+  ]);
+
+  const candidates = [...legacy.value, ...t22.value].filter(
+    (acc) => isLikelyPositionNftAccount(acc.account),
+  );
+
+  for (const acc of candidates) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mint = new PublicKey((acc.account.data as any).parsed.info.mint as string);
+    const position = derivePositionAddress(mint);
+    const info = await connection.getAccountInfo(position);
+    if (!info) continue;
+    const state = await cpAmm.fetchPositionState(position);
+    if (state.pool.equals(pool)) {
+      return { position, positionNftAccount: derivePositionNftAccount(mint) };
+    }
+  }
+  return null;
+}
+
+// ─── ALT helpers ─────────────────────────────────────────────────────────────
+
+async function createPoolAlt(
+  connection: Connection,
+  wallet: AnchorWallet,
+  params: {
+    pool: PublicKey;
+    claimers: PublicKey[];
+    baseMint: PublicKey;
+    quoteMint: PublicKey;
+    baseTokenProgram: PublicKey;
+    quoteTokenProgram: PublicKey;
+    // DBC-specific extras (pass undefined for DAMM v2)
+    dbcPoolAuthority_?: PublicKey;
+    dbcEventAuthority_?: PublicKey;
+    dbcConfig?: PublicKey;
+    dbcBaseVault?: PublicKey;
+    dbcQuoteVault?: PublicKey;
+    // DAMM v2 extras (pass undefined for DBC)
+    cpAmmPoolAuthority?: PublicKey;
+    cpAmmEventAuthority?: PublicKey;
+    tokenAVault?: PublicKey;
+    tokenBVault?: PublicKey;
+    positionNftAccount?: PublicKey;
+    position?: PublicKey;
+    cpAmmProgram?: PublicKey;
+  },
+): Promise<PublicKey> {
+  const { pool, claimers, baseMint, quoteMint, baseTokenProgram, quoteTokenProgram } = params;
+
+  // Use finalized slot to ensure the ALT creation tx references a confirmed slot
+  const slot = await connection.getSlot('finalized');
+
+  const [createIx, tableAddress] = AddressLookupTableProgram.createLookupTable({
+    authority: wallet.publicKey,
+    payer: wallet.publicKey,
+    recentSlot: slot,
+  });
+
+  // ── Derive all deterministic per-pool addresses ──
+  const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, baseMint, quoteMint);
+  const poolClaimersPda = derivePoolClaimersPda(pool);
+  const feeClaimerPda = deriveFeeClaimerPda();
+
+  // Per claimer: wallet + all 4 PDAs/ATAs used in distribute
+  const perClaimerAddresses = claimers.flatMap((claimer) => [
+    claimer,
+    deriveClaimerStatePda(pool, claimer),
+    deriveClaimerPendingBaseVault(pool, claimer),
+    deriveClaimerPendingQuoteVault(pool, claimer),
+    getAssociatedTokenAddressSync(baseMint, claimer, false, baseTokenProgram),
+    getAssociatedTokenAddressSync(quoteMint, claimer, false, quoteTokenProgram),
+  ]);
+
+  const fixedAddresses: PublicKey[] = [
+    pool,
+    baseMint,
+    quoteMint,
+    baseFeeVault,
+    quoteFeeVault,
+    poolClaimersPda,
+    feeClaimerPda,
+    TOKEN_PROGRAM_ID,
+    TOKEN_2022_PROGRAM_ID,
+    SystemProgram.programId,
+  ];
+
+  const optionalAddresses: PublicKey[] = [
+    params.dbcPoolAuthority_,
+    params.dbcEventAuthority_,
+    params.dbcConfig,
+    params.dbcBaseVault,
+    params.dbcQuoteVault,
+    params.cpAmmPoolAuthority,
+    params.cpAmmEventAuthority,
+    params.tokenAVault,
+    params.tokenBVault,
+    params.positionNftAccount,
+    params.position,
+    params.cpAmmProgram,
+  ].filter((a): a is PublicKey => a != null);
+
+  const allAddresses = [...fixedAddresses, ...perClaimerAddresses, ...optionalAddresses];
+
+  const extendIx = AddressLookupTableProgram.extendLookupTable({
+    payer: wallet.publicKey,
+    authority: wallet.publicKey,
+    lookupTable: tableAddress,
+    addresses: allAddresses,
+  });
+
+  const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
+  const setupTx = new Transaction().add(createIx, extendIx);
+  await provider.sendAndConfirm(setupTx);
+
+  // Wait for ALT to be visible on-chain before returning.
+  // On devnet ~1s is enough; on mainnet the ALT warmup is ~1 epoch so the
+  // admin must save the altAddress and only pass it to claimAndDistribute
+  // after the warmup period has elapsed.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  console.log('[createPoolAlt] ALT created:', tableAddress.toBase58(), '| total addresses:', allAddresses.length);
+  return tableAddress;
+}
+
+/**
+ * Sends a transaction using v0 format + ALT if altAddress is provided,
+ * otherwise falls back to legacy transaction format.
+ */
+async function sendV0Transaction(
+  connection: Connection,
+  wallet: AnchorWallet,
+  instructions: import('@solana/web3.js').TransactionInstruction[],
+  altAddress: string | undefined,
+  sendTransaction?: (
+    tx: Transaction | VersionedTransaction,
+    connection: Connection,
+    options?: { skipPreflight?: boolean; maxRetries?: number },
+  ) => Promise<string>,
+): Promise<{ sig: string; blockhash: string; lastValidBlockHeight: number }> {
+  const latest = await connection.getLatestBlockhash('confirmed');
+
+  if (altAddress) {
+    const altPubkey = new PublicKey(altAddress);
+    const altResult = await connection.getAddressLookupTable(altPubkey);
+
+    if (!altResult.value) {
+      throw new Error(`ALT not found on-chain: ${altAddress}. It may not have propagated yet — wait a moment and retry.`);
+    }
+
+    // Check ALT is not deactivated
+    // deactivationSlot is u64::MAX (18446744073709551615n) when active
+    if (altResult.value.state.deactivationSlot !== BigInt('18446744073709551615')) {
+      throw new Error(`ALT ${altAddress} has been deactivated and cannot be used.`);
+    }
+
+    // Check ALT warmup: lastExtendedSlot must be < current finalized slot
+    const currentSlot = await connection.getSlot('finalized');
+    if (altResult.value.state.lastExtendedSlot >= currentSlot) {
+      throw new Error(
+        `ALT not yet active. Extended at slot ${altResult.value.state.lastExtendedSlot}, ` +
+        `current finalized slot ${currentSlot}. Wait a few slots (devnet) or ~1 epoch (mainnet) and retry.`,
+      );
+    }
+
+    const message = new TransactionMessage({
+      payerKey: wallet.publicKey,
+      recentBlockhash: latest.blockhash,
+      instructions,
+    }).compileToV0Message([altResult.value]);
+
+    const vtx = new VersionedTransaction(message);
+
+    let sig: string;
+    if (sendTransaction) {
+      sig = await sendTransaction(vtx as unknown as Transaction, connection, {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signed = await (wallet as any).signTransaction(vtx);
+      sig = await connection.sendRawTransaction(signed.serialize(), {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+    }
+
+    return { sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight };
+  }
+
+  // ── Legacy fallback (no ALT) ──
+  const tx = new Transaction().add(...instructions);
+  tx.recentBlockhash = latest.blockhash;
+  tx.feePayer = wallet.publicKey;
+
+  let sig: string;
+  if (sendTransaction) {
+    sig = await sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
+  } else {
+    const signed = await wallet.signTransaction(tx);
+    sig = await connection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+  }
+
+  return { sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight };
+}
 
 // ─── Program factory ─────────────────────────────────────────────────────────
 
@@ -216,7 +440,6 @@ export async function viewPoolClaimers(
   connection: Connection,
   poolAddress: string,
 ): Promise<PoolClaimersState> {
-  // Use a dummy wallet for read-only — no signing needed
   const dummyWallet: AnchorWallet = {
     publicKey: PublicKey.default,
     signTransaction: async (tx) => tx,
@@ -263,7 +486,6 @@ export async function viewPoolClaimers(
   };
 }
 
-/** Single claimer `ClaimerState` account (all on-chain fields except bump). */
 export interface ClaimerPoolInfo {
   claimerStatePda: string;
   pool: string;
@@ -306,77 +528,6 @@ export async function viewClaimerPoolInfo(
   }
 }
 
-// ─── View: DBC Pool State ─────────────────────────────────────────────────────
-
-export async function viewDbcPool(
-  connection: Connection,
-  poolAddress: string,
-) {
-  const client = new DynamicBondingCurveClient(connection, 'confirmed');
-  const pool = new PublicKey(poolAddress);
-  const state = await client.state.getPool(pool);
-  return {
-    pool: pool.toBase58(),
-    config: state.config.toBase58(),
-    baseMint: state.baseMint.toBase58(),
-    quoteMint: WSOL_MINT.toBase58(),
-    baseVault: state.baseVault.toBase58(),
-    quoteVault: state.quoteVault.toBase58(),
-  };
-}
-
-// ─── View: DAMM v2 Pool State ─────────────────────────────────────────────────
-
-export async function viewDammV2Pool(
-  connection: Connection,
-  poolAddress: string,
-) {
-  const cpAmm = new CpAmm(connection);
-  const pool = new PublicKey(poolAddress);
-  const state = await cpAmm.fetchPoolState(pool);
-  return {
-    pool: pool.toBase58(),
-    tokenAMint: state.tokenAMint.toBase58(),
-    tokenBMint: state.tokenBMint.toBase58(),
-    tokenAVault: state.tokenAVault.toBase58(),
-    tokenBVault: state.tokenBVault.toBase58(),
-    tokenAFlag: state.tokenAFlag,
-    tokenBFlag: state.tokenBFlag,
-  };
-}
-
-// ─── View: DAMM v2 Position Info ──────────────────────────────────────────────
-
-export async function viewDammV2Position(
-  connection: Connection,
-  nftMint: string,
-) {
-  const cpAmm = new CpAmm(connection);
-  const nftMintPk = new PublicKey(nftMint);
-
-  const position = derivePositionAddress(nftMintPk);
-  const positionNftAccount = derivePositionNftAccount(nftMintPk);
-
-  const positionAccountInfo = await connection.getAccountInfo(position);
-  if (!positionAccountInfo) {
-    throw new Error(`Position account not found for NFT mint ${nftMint}`);
-  }
-
-  const positionState = await cpAmm.fetchPositionState(position);
-  const pool = positionState.pool;
-  const poolState = await cpAmm.fetchPoolState(pool);
-  const unclaimedFees = getUnClaimLpFee(poolState, positionState);
-
-  return {
-    pool: pool.toBase58(),
-    position: position.toBase58(),
-    positionNftAccount: positionNftAccount.toBase58(),
-    tokenAMint: poolState.tokenAMint.toBase58(),
-    tokenBMint: poolState.tokenBMint.toBase58(),
-    unclaimedFeeA: unclaimedFees.feeTokenA.toString(),
-    unclaimedFeeB: unclaimedFees.feeTokenB.toString(),
-  };
-}
 
 // ─── View: Fee Vault Balances ─────────────────────────────────────────────────
 
@@ -458,13 +609,8 @@ function isLikelyPositionNftAccount(
   return tokenAmount.decimals === 0 && tokenAmount.amount === '1';
 }
 
-async function getTokenDisplayInfo(
-  connection: Connection,
-  mint: PublicKey,
-): Promise<TokenDisplayInfo> {
-  if (mint.equals(WSOL_MINT)) {
-    return { name: 'Solana', symbol: 'SOL' };
-  }
+async function getTokenDisplayInfo(connection: Connection, mint: PublicKey): Promise<TokenDisplayInfo> {
+  if (mint.equals(WSOL_MINT)) return { name: 'Solana', symbol: 'SOL' };
 
   const mintAccountInfo = await connection.getAccountInfo(mint);
   const ownerProgram = mintAccountInfo?.owner;
@@ -480,7 +626,7 @@ async function getTokenDisplayInfo(
         };
       }
     } catch {
-      // Continue to generic fallback below.
+      // fallthrough
     }
   }
 
@@ -533,11 +679,7 @@ export async function viewVaultAllTokenInfo(connection: Connection): Promise<{
 
   const positionsRaw = positionsMaybe.filter((p): p is VaultPositionInfoBase => p !== null);
 
-  const uniqueMintStrings = [
-    ...new Set(
-      positionsRaw.flatMap((p) => [p.tokenAMint, p.tokenBMint]),
-    ),
-  ];
+  const uniqueMintStrings = [...new Set(positionsRaw.flatMap((p) => [p.tokenAMint, p.tokenBMint]))];
   const mintMetadataEntries = await Promise.all(
     uniqueMintStrings.map(async (mintStr) => {
       const info = await getTokenDisplayInfo(connection, new PublicKey(mintStr));
@@ -558,11 +700,7 @@ export async function viewVaultAllTokenInfo(connection: Connection): Promise<{
     };
   });
 
-  return {
-    vaultPubkey: vault.toBase58(),
-    totalPositions: positions.length,
-    positions,
-  };
+  return { vaultPubkey: vault.toBase58(), totalPositions: positions.length, positions };
 }
 
 // ─── Admin: Initialize pool claimers ─────────────────────────────────────────
@@ -581,40 +719,52 @@ export async function initializePoolClaimers(
     claimers: ClaimerEntry[];
     network: 'devnet' | 'mainnet';
   },
-): Promise<{ tx: string; link: string }> {
+): Promise<{ tx: string; link: string; altAddress: string }> {
   const program = createProgram(wallet, connection);
   const pool = new PublicKey(params.poolAddress);
   const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
 
   const claimerPubkeys = params.claimers.map((c) => new PublicKey(c.address));
   const bps = params.claimers.map((c) => c.bps);
-  const poolState = params.mode === 'dbc' ? { dbc: {} } : { dammV2: {} };
+  const poolStateArg = params.mode === 'dbc' ? { dbc: {} } : { dammV2: {} };
 
+  // Hoisted so they're accessible in the ALT creation block below
   let baseMint: PublicKey;
   let quoteMint: PublicKey;
   let tokenBaseProgram: PublicKey;
   let tokenQuoteProgram: PublicKey;
 
+  // DBC-specific fields for ALT
+  let dbcPoolStateResolved: Awaited<
+    ReturnType<InstanceType<typeof DynamicBondingCurveClient>['state']['getPool']>
+  > | null = null;
+
+  // DAMM v2-specific fields for ALT
+  let dammPositionResolved: { position: PublicKey; positionNftAccount: PublicKey } | null = null;
+  let dammPoolStateResolved: Awaited<ReturnType<CpAmm['fetchPoolState']>> | null = null;
+
   if (params.mode === 'dbc') {
     const client = new DynamicBondingCurveClient(connection, 'confirmed');
-    const dbcPoolState = await client.state.getPool(pool);
-    baseMint = dbcPoolState.baseMint;
+    dbcPoolStateResolved = await client.state.getPool(pool);
+    baseMint = dbcPoolStateResolved.baseMint;
     quoteMint = WSOL_MINT;
     tokenBaseProgram = TOKEN_2022_PROGRAM_ID;
     tokenQuoteProgram = TOKEN_PROGRAM_ID;
   } else {
     const cpAmm = new CpAmm(connection);
-    const poolState = await cpAmm.fetchPoolState(pool);
-    baseMint = poolState.tokenAMint;
-    quoteMint = poolState.tokenBMint;
-    tokenBaseProgram = getTokenProgram(poolState.tokenAFlag);
-    tokenQuoteProgram = getTokenProgram(poolState.tokenBFlag);
+    dammPoolStateResolved = await cpAmm.fetchPoolState(pool);
+    baseMint = dammPoolStateResolved.tokenAMint;
+    quoteMint = dammPoolStateResolved.tokenBMint;
+    tokenBaseProgram = getTokenProgram(dammPoolStateResolved.tokenAFlag);
+    tokenQuoteProgram = getTokenProgram(dammPoolStateResolved.tokenBFlag);
+    // Resolve position for ALT — may be null if position hasn't been created yet
+    dammPositionResolved = await resolveDammV2Position(connection, pool);
   }
 
   const initRemaining = buildInitClaimersRemainingAccounts(pool, claimerPubkeys);
 
   const sig: string = await programMethods(program)
-    .initializePoolClaimers(claimerPubkeys, bps, poolState)
+    .initializePoolClaimers(claimerPubkeys, bps, poolStateArg)
     .accounts({
       deployer: wallet.publicKey,
       pool,
@@ -628,7 +778,45 @@ export async function initializePoolClaimers(
     .remainingAccounts(initRemaining)
     .rpc();
 
-  return { tx: sig, link: solscanLink(sig, params.network) };
+  // ── Create ALT right after pool claimers are initialized ──
+  let altAddress = '';
+  try {
+    const altPubkey = await createPoolAlt(connection, wallet, {
+      pool,
+      claimers: claimerPubkeys,
+      baseMint,
+      quoteMint,
+      baseTokenProgram: tokenBaseProgram,
+      quoteTokenProgram: tokenQuoteProgram,
+      // DBC-specific extras
+      ...(params.mode === 'dbc' && dbcPoolStateResolved != null && {
+        dbcPoolAuthority_: dbcPoolAuthority,
+        dbcEventAuthority_: dbcEventAuthority,
+        dbcConfig: dbcPoolStateResolved.config,
+        dbcBaseVault: dbcPoolStateResolved.baseVault,
+        dbcQuoteVault: dbcPoolStateResolved.quoteVault,
+      }),
+      // DAMM v2-specific extras
+      ...(params.mode === 'damm-v2' && dammPoolStateResolved != null && {
+        cpAmmPoolAuthority: derivePoolAuthority(),
+        cpAmmEventAuthority: deriveCpAmmEventAuthority(DAMMV2_PROGRAM_ID),
+        cpAmmProgram: DAMMV2_PROGRAM_ID,
+        tokenAVault: dammPoolStateResolved.tokenAVault,
+        tokenBVault: dammPoolStateResolved.tokenBVault,
+        ...(dammPositionResolved != null && {
+          position: dammPositionResolved.position,
+          positionNftAccount: dammPositionResolved.positionNftAccount,
+        }),
+      }),
+    });
+    altAddress = altPubkey.toBase58();
+    console.log('[initializePoolClaimers] ALT created:', altAddress);
+  } catch (e) {
+    console.error('[initializePoolClaimers] ALT creation failed:', e);
+    throw new Error(`Address Lookup Table creation failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  return { tx: sig, link: solscanLink(sig, params.network), altAddress };
 }
 
 // ─── Admin: Update Claimers BPS ───────────────────────────────────────────────
@@ -645,7 +833,6 @@ export async function updateClaimersBps(
   const program = createProgram(wallet, connection);
   const pool = new PublicKey(params.poolAddress);
   const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
-
   const bps = params.claimers.map((c) => c.bps);
 
   const sig: string = await programMethods(program)
@@ -733,40 +920,21 @@ export async function adminSweepClaimer(
   const claimerPendingBaseVault = deriveClaimerPendingBaseVault(pool, claimer);
   const claimerPendingQuoteVault = deriveClaimerPendingQuoteVault(pool, claimer);
 
-  const destinationBaseAta = getAssociatedTokenAddressSync(
-    baseMint,
-    recipient,
-    false,
-    tokenBaseProgram,
-  );
-  const destinationQuoteAta = getAssociatedTokenAddressSync(
-    quoteMint,
-    recipient,
-    false,
-    tokenQuoteProgram,
-  );
+  const destinationBaseAta = getAssociatedTokenAddressSync(baseMint, recipient, false, tokenBaseProgram);
+  const destinationQuoteAta = getAssociatedTokenAddressSync(quoteMint, recipient, false, tokenQuoteProgram);
 
   const createAtaIxs = [
     createAssociatedTokenAccountIdempotentInstruction(
-      wallet.publicKey,
-      destinationBaseAta,
-      recipient,
-      baseMint,
-      tokenBaseProgram,
+      wallet.publicKey, destinationBaseAta, recipient, baseMint, tokenBaseProgram,
     ),
     createAssociatedTokenAccountIdempotentInstruction(
-      wallet.publicKey,
-      destinationQuoteAta,
-      recipient,
-      quoteMint,
-      tokenQuoteProgram,
+      wallet.publicKey, destinationQuoteAta, recipient, quoteMint, tokenQuoteProgram,
     ),
   ];
 
-  let ataTx: string | undefined;
   const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
   const createAtaTransaction = new Transaction().add(...createAtaIxs);
-  ataTx = await provider.sendAndConfirm(createAtaTransaction);
+  const ataTx = await provider.sendAndConfirm(createAtaTransaction);
 
   const sig: string = await programMethods(program)
     .adminSweepClaimer()
@@ -816,9 +984,7 @@ export async function claimDbcPartnerFee(
     const pool = new PublicKey(params.poolAddress);
 
     const poolAccountInfo = await connection.getAccountInfo(pool, 'confirmed');
-    if (!poolAccountInfo) {
-      throw new Error(`Pool account not found: ${pool.toBase58()}`);
-    }
+    if (!poolAccountInfo) throw new Error(`Pool account not found: ${pool.toBase58()}`);
     if (!poolAccountInfo.owner.equals(DBC_PROGRAM_ID)) {
       throw new Error(
         [
@@ -846,12 +1012,9 @@ export async function claimDbcPartnerFee(
         ].join(' '),
       );
     }
+
     const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
-    const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(
-      pool,
-      dbcPoolState.baseMint,
-      WSOL_MINT,
-    );
+    const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, dbcPoolState.baseMint, WSOL_MINT);
     const feeClaimerPda = deriveFeeClaimerPda();
 
     const builder = programMethods(program)
@@ -879,30 +1042,15 @@ export async function claimDbcPartnerFee(
         systemProgram: SystemProgram.programId,
       });
 
-    console.log('[claimDbcPartnerFee] accounts prepared', {
-      pool: pool.toBase58(),
-      poolClaimers: poolClaimersPdaPubKey.toBase58(),
-      baseFeeVault: baseFeeVault.toBase58(),
-      quoteFeeVault: quoteFeeVault.toBase58(),
-      feeClaimer: feeClaimerPda.toBase58(),
-    });
-
     const tx = await builder.transaction();
-    console.log('[claimDbcPartnerFee] transaction built', {
-      instructions: tx.instructions.length,
-      feePayer: tx.feePayer?.toBase58() ?? null,
-    });
 
     try {
       const sim = await builder.simulate();
-      console.log('[claimDbcPartnerFee] simulate ok', {
-        hasLogs: Boolean(sim.raw?.logs?.length),
-      });
+      console.log('[claimDbcPartnerFee] simulate ok', { hasLogs: Boolean(sim.raw?.logs?.length) });
     } catch (simError) {
       console.error('[claimDbcPartnerFee] simulate failed', simError);
     }
 
-    console.log('[claimDbcPartnerFee] sending tx (wallet prompt expected)');
     let sig: string;
     try {
       const latest = await connection.getLatestBlockhash('confirmed');
@@ -910,47 +1058,25 @@ export async function claimDbcPartnerFee(
       tx.feePayer = wallet.publicKey;
 
       if (params.sendTransaction) {
-        // Prefer wallet-adapter send path for standard-wallet compatibility.
-        sig = await params.sendTransaction(tx, connection, {
-          skipPreflight: false,
-          maxRetries: 3,
-        });
+        sig = await params.sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
       } else {
         const signedTx = await wallet.signTransaction(tx);
-        sig = await connection.sendRawTransaction(signedTx.serialize(), {
-          skipPreflight: false,
-          maxRetries: 3,
-        });
+        sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: false, maxRetries: 3 });
       }
       await connection.confirmTransaction(
-        {
-          signature: sig,
-          blockhash: latest.blockhash,
-          lastValidBlockHeight: latest.lastValidBlockHeight,
-        },
+        { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
         'confirmed',
       );
     } catch (rpcError) {
-      const e = rpcError as {
-        name?: string;
-        message?: string;
-        code?: string | number;
-        cause?: unknown;
-      };
-      console.error('[claimDbcPartnerFee] tx failed at wallet/sign/send', {
-        name: e?.name,
-        message: e?.message,
-        code: e?.code,
-        cause: e?.cause,
-      });
-      throw new Error(
-        `claimDbcPartnerFee wallet/tx failed: ${e?.name ?? 'UnknownError'}: ${e?.message ?? 'No message'}`,
-      );
+      const e = rpcError as { name?: string; message?: string; code?: string | number };
+      console.error('[claimDbcPartnerFee] tx failed', e);
+      throw new Error(`claimDbcPartnerFee wallet/tx failed: ${e?.name ?? 'UnknownError'}: ${e?.message ?? 'No message'}`);
     }
+
     console.log('[claimDbcPartnerFee] rpc success', { sig });
     return { tx: sig, link: solscanLink(sig, params.network) };
   } catch (error) {
-    console.error('[claimDbcPartnerFee] failed before/at rpc', error);
+    console.error('[claimDbcPartnerFee] failed', error);
     throw error;
   }
 }
@@ -968,51 +1094,19 @@ export async function claimDammV2PositionFee(
   const program = createProgram(wallet, connection);
   const cpAmm = new CpAmm(connection);
   const pool = new PublicKey(params.poolAddress);
-  const vault = deriveFeeClaimerPda();
 
-  // Find the position NFT owned by the vault that belongs to this pool.
-  const [legacyTokenAccounts, token2022Accounts] = await Promise.all([
-    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_PROGRAM_ID }),
-    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_2022_PROGRAM_ID }),
-  ]);
-
-  const allTokenAccounts = [...legacyTokenAccounts.value, ...token2022Accounts.value];
-  const nftCandidates = allTokenAccounts.filter((acc) => isLikelyPositionNftAccount(acc.account));
-
-  let nftMintPk: PublicKey | null = null;
-  let position: PublicKey | null = null;
-  let positionNftAccount: PublicKey | null = null;
-
-  for (const acc of nftCandidates) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mintStr = (acc.account.data as any).parsed.info.mint as string;
-    const candidateMint = new PublicKey(mintStr);
-    const candidatePosition = derivePositionAddress(candidateMint);
-    const positionInfo = await connection.getAccountInfo(candidatePosition);
-    if (!positionInfo) continue;
-    const positionState = await cpAmm.fetchPositionState(candidatePosition);
-    if (positionState.pool.equals(pool)) {
-      nftMintPk = candidateMint;
-      position = candidatePosition;
-      positionNftAccount = derivePositionNftAccount(candidateMint);
-      break;
-    }
-  }
-
-  if (!nftMintPk || !position || !positionNftAccount) {
+  const resolved = await resolveDammV2Position(connection, pool);
+  if (!resolved) {
     throw new Error(`No vault-owned position found for DAMM v2 pool ${params.poolAddress}`);
   }
-  const poolState = await cpAmm.fetchPoolState(pool);
+  const { position, positionNftAccount } = resolved;
 
+  const poolState = await cpAmm.fetchPoolState(pool);
   const tokenAProgram = getTokenProgram(poolState.tokenAFlag);
   const tokenBProgram = getTokenProgram(poolState.tokenBFlag);
   const poolAuthority = derivePoolAuthority();
   const poolClaimersPdaPubKey = derivePoolClaimersPda(pool);
-  const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(
-    pool,
-    poolState.tokenAMint,
-    poolState.tokenBMint,
-  );
+  const { baseFeeVault, quoteFeeVault } = derivePoolFeeVaults(pool, poolState.tokenAMint, poolState.tokenBMint);
   const feeClaimerPda = deriveFeeClaimerPda();
   const cpAmmEventAuthority = deriveCpAmmEventAuthority(DAMMV2_PROGRAM_ID);
 
@@ -1084,21 +1178,16 @@ export async function distributeFees(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const onchainPoolState: any = await (program.account as any).poolClaimers.fetch(poolClaimersPdaPubKey);
 
-  // Create all claimer ATAs idempotently
   const createAtaIxs = onchainPoolState.claimerAddresses.flatMap((claimerAddr: PublicKey) => [
     createAssociatedTokenAccountIdempotentInstruction(
       wallet.publicKey,
       getAssociatedTokenAddressSync(baseMint, claimerAddr, false, baseTokenProgram),
-      claimerAddr,
-      baseMint,
-      baseTokenProgram,
+      claimerAddr, baseMint, baseTokenProgram,
     ),
     createAssociatedTokenAccountIdempotentInstruction(
       wallet.publicKey,
       getAssociatedTokenAddressSync(quoteMint, claimerAddr, false, quoteTokenProgram),
-      claimerAddr,
-      quoteMint,
-      quoteTokenProgram,
+      claimerAddr, quoteMint, quoteTokenProgram,
     ),
   ]);
 
@@ -1112,10 +1201,7 @@ export async function distributeFees(
   const remainingAccounts = buildDistributeFeesRemainingAccounts(
     pool,
     onchainPoolState.claimerAddresses as PublicKey[],
-    baseMint,
-    quoteMint,
-    baseTokenProgram,
-    quoteTokenProgram,
+    baseMint, quoteMint, baseTokenProgram, quoteTokenProgram,
   );
 
   const sig: string = await programMethods(program)
@@ -1138,7 +1224,7 @@ export async function distributeFees(
   return { tx: sig, link: solscanLink(sig, params.network), ataTx };
 }
 
-// ─── Non-Admin: Claim + Distribute Fees in one transaction ────────────────────
+// ─── Non-Admin: Claim + Distribute DBC Fees (one transaction) ────────────────
 
 export async function claimAndDistributeFeesDbc(
   connection: Connection,
@@ -1146,8 +1232,9 @@ export async function claimAndDistributeFeesDbc(
   params: {
     poolAddress: string;
     network: 'devnet' | 'mainnet';
+    altAddress: string;
     sendTransaction?: (
-      tx: Transaction,
+      tx: Transaction | VersionedTransaction,
       connection: Connection,
       options?: { skipPreflight?: boolean; maxRetries?: number },
     ) => Promise<string>;
@@ -1209,26 +1296,17 @@ export async function claimAndDistributeFeesDbc(
     createAssociatedTokenAccountIdempotentInstruction(
       wallet.publicKey,
       getAssociatedTokenAddressSync(baseMint, claimerAddr, false, baseTokenProgram),
-      claimerAddr,
-      baseMint,
-      baseTokenProgram,
+      claimerAddr, baseMint, baseTokenProgram,
     ),
     createAssociatedTokenAccountIdempotentInstruction(
       wallet.publicKey,
       getAssociatedTokenAddressSync(quoteMint, claimerAddr, false, quoteTokenProgram),
-      claimerAddr,
-      quoteMint,
-      quoteTokenProgram,
+      claimerAddr, quoteMint, quoteTokenProgram,
     ),
   ]);
 
   const remainingAccounts = buildDistributeFeesRemainingAccounts(
-    pool,
-    claimerAddresses,
-    baseMint,
-    quoteMint,
-    baseTokenProgram,
-    quoteTokenProgram,
+    pool, claimerAddresses, baseMint, quoteMint, baseTokenProgram, quoteTokenProgram,
   );
 
   const distributeIx = await programMethods(program)
@@ -1248,25 +1326,23 @@ export async function claimAndDistributeFeesDbc(
     .remainingAccounts(remainingAccounts)
     .instruction();
 
-  const tx = new Transaction().add(claimIx, ...createAtaIxs, distributeIx);
-  const latest = await connection.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = latest.blockhash;
-  tx.feePayer = wallet.publicKey;
+  const { sig, blockhash, lastValidBlockHeight } = await sendV0Transaction(
+    connection,
+    wallet,
+    [claimIx, ...createAtaIxs, distributeIx],
+    params.altAddress,
+    params.sendTransaction,
+  );
 
-  let sig: string;
-  if (params.sendTransaction) {
-    sig = await params.sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
-  } else {
-    const signedTx = await wallet.signTransaction(tx);
-    sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: false, maxRetries: 3 });
-  }
   await connection.confirmTransaction(
-    { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+    { signature: sig, blockhash, lastValidBlockHeight },
     'confirmed',
   );
 
   return { tx: sig, link: solscanLink(sig, params.network) };
 }
+
+// ─── Non-Admin: Claim + Distribute DAMM v2 Fees (one transaction) ────────────
 
 export async function claimAndDistributeFeesDammV2(
   connection: Connection,
@@ -1274,8 +1350,9 @@ export async function claimAndDistributeFeesDammV2(
   params: {
     poolAddress: string;
     network: 'devnet' | 'mainnet';
+    altAddress: string;
     sendTransaction?: (
-      tx: Transaction,
+      tx: Transaction | VersionedTransaction,
       connection: Connection,
       options?: { skipPreflight?: boolean; maxRetries?: number },
     ) => Promise<string>;
@@ -1284,36 +1361,12 @@ export async function claimAndDistributeFeesDammV2(
   const program = createProgram(wallet, connection);
   const cpAmm = new CpAmm(connection);
   const pool = new PublicKey(params.poolAddress);
-  const vault = deriveFeeClaimerPda();
 
-  const [legacyTokenAccounts, token2022Accounts] = await Promise.all([
-    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_PROGRAM_ID }),
-    connection.getParsedTokenAccountsByOwner(vault, { programId: TOKEN_2022_PROGRAM_ID }),
-  ]);
-  const allTokenAccounts = [...legacyTokenAccounts.value, ...token2022Accounts.value];
-  const nftCandidates = allTokenAccounts.filter((acc) => isLikelyPositionNftAccount(acc.account));
-
-  let nftMintPk: PublicKey | null = null;
-  let position: PublicKey | null = null;
-  let positionNftAccount: PublicKey | null = null;
-  for (const acc of nftCandidates) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mintStr = (acc.account.data as any).parsed.info.mint as string;
-    const candidateMint = new PublicKey(mintStr);
-    const candidatePosition = derivePositionAddress(candidateMint);
-    const positionInfo = await connection.getAccountInfo(candidatePosition);
-    if (!positionInfo) continue;
-    const positionState = await cpAmm.fetchPositionState(candidatePosition);
-    if (positionState.pool.equals(pool)) {
-      nftMintPk = candidateMint;
-      position = candidatePosition;
-      positionNftAccount = derivePositionNftAccount(candidateMint);
-      break;
-    }
-  }
-  if (!nftMintPk || !position || !positionNftAccount) {
+  const resolved = await resolveDammV2Position(connection, pool);
+  if (!resolved) {
     throw new Error(`No vault-owned position found for DAMM v2 pool ${params.poolAddress}`);
   }
+  const { position, positionNftAccount } = resolved;
 
   const poolState = await cpAmm.fetchPoolState(pool);
   const baseMint = poolState.tokenAMint;
@@ -1357,26 +1410,17 @@ export async function claimAndDistributeFeesDammV2(
     createAssociatedTokenAccountIdempotentInstruction(
       wallet.publicKey,
       getAssociatedTokenAddressSync(baseMint, claimerAddr, false, baseTokenProgram),
-      claimerAddr,
-      baseMint,
-      baseTokenProgram,
+      claimerAddr, baseMint, baseTokenProgram,
     ),
     createAssociatedTokenAccountIdempotentInstruction(
       wallet.publicKey,
       getAssociatedTokenAddressSync(quoteMint, claimerAddr, false, quoteTokenProgram),
-      claimerAddr,
-      quoteMint,
-      quoteTokenProgram,
+      claimerAddr, quoteMint, quoteTokenProgram,
     ),
   ]);
 
   const remainingAccounts = buildDistributeFeesRemainingAccounts(
-    pool,
-    claimerAddresses,
-    baseMint,
-    quoteMint,
-    baseTokenProgram,
-    quoteTokenProgram,
+    pool, claimerAddresses, baseMint, quoteMint, baseTokenProgram, quoteTokenProgram,
   );
 
   const distributeIx = await programMethods(program)
@@ -1396,20 +1440,16 @@ export async function claimAndDistributeFeesDammV2(
     .remainingAccounts(remainingAccounts)
     .instruction();
 
-  const tx = new Transaction().add(claimIx, ...createAtaIxs, distributeIx);
-  const latest = await connection.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = latest.blockhash;
-  tx.feePayer = wallet.publicKey;
+  const { sig, blockhash, lastValidBlockHeight } = await sendV0Transaction(
+    connection,
+    wallet,
+    [claimIx, ...createAtaIxs, distributeIx],
+    params.altAddress,
+    params.sendTransaction,
+  );
 
-  let sig: string;
-  if (params.sendTransaction) {
-    sig = await params.sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
-  } else {
-    const signedTx = await wallet.signTransaction(tx);
-    sig = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: false, maxRetries: 3 });
-  }
   await connection.confirmTransaction(
-    { signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+    { signature: sig, blockhash, lastValidBlockHeight },
     'confirmed',
   );
 

@@ -151,6 +151,7 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
     description: 'One-shot for end users — claims DBC partner trading fees, creates any missing claimer ATAs, and distributes to all registered claimers in a single transaction (single wallet signature).',
     fields: [
       { name: 'pool_address', label: 'DBC Pool Address', placeholder: 'DBC pool pubkey' },
+      { name: 'alt_address', label: 'ALT Address (optional)', placeholder: 'Address Lookup Table pubkey — leave blank to skip' },
     ],
     submitLabel: 'Claim + Distribute (DBC)',
   },
@@ -161,6 +162,7 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
     description: 'One-shot for end users — claims DAMM v2 LP position fees into the vault, creates any missing claimer ATAs, and distributes to all registered claimers in a single transaction (single wallet signature).',
     fields: [
       { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
+      { name: 'alt_address', label: 'ALT Address (optional)', placeholder: 'Address Lookup Table pubkey — leave blank to skip' },
     ],
     submitLabel: 'Claim + Distribute (DAMM v2)',
   },
@@ -690,16 +692,20 @@ function AccordionItem({
         });
         data = { tx: r.tx, solscan: r.link, ataTx: r.ataTx };
       } else if (fn.id === 'claim_and_distribute_dbc') {
+        if (!values.alt_address) throw new Error('ALT Address is required — copy it from the Set Pool Claimers result.');
         const r = await claimAndDistributeFeesDbc(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           network: net,
+          altAddress: values.alt_address,
           sendTransaction,
         });
         data = { tx: r.tx, solscan: r.link };
       } else if (fn.id === 'claim_and_distribute_dammv2') {
+        if (!values.alt_address) throw new Error('ALT Address is required — copy it from the Set Pool Claimers result.');
         const r = await claimAndDistributeFeesDammV2(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           network: net,
+          altAddress: values.alt_address,
           sendTransaction,
         });
         data = { tx: r.tx, solscan: r.link };
