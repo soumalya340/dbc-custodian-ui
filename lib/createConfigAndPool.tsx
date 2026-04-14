@@ -162,8 +162,8 @@ export async function createConfigAndPool(
   }).compileToV0Message();
 
   const configVersionedTransaction = new VersionedTransaction(configMessageV0);
-  configVersionedTransaction.sign([config]);
   const signedConfigTx = await wallet.signTransaction(configVersionedTransaction);
+  signedConfigTx.sign([config]);
   const configSignature = await connection.sendTransaction(signedConfigTx, {
     skipPreflight: true,
     maxRetries: 3,
@@ -189,9 +189,8 @@ export async function createConfigAndPool(
   }).compileToV0Message();
 
   const poolVersionedTransaction = new VersionedTransaction(poolMessageV0);
-  poolVersionedTransaction.sign([baseMint]);
-
   const signedPoolTx = await wallet.signTransaction(poolVersionedTransaction);
+  signedPoolTx.sign([baseMint]);
   
   const signature = await connection.sendTransaction(signedPoolTx, {
     skipPreflight: true,

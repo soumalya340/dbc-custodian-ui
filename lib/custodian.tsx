@@ -418,17 +418,29 @@ async function createPoolAlt(
 
   const allAddresses = [...fixedAddresses, ...perClaimerAddresses, ...optionalAddresses];
 
-  const extendIx = AddressLookupTableProgram.extendLookupTable({
-    payer: wallet.publicKey,
-    authority: wallet.publicKey,
-    lookupTable: tableAddress,
-    addresses: allAddresses,
-  });
-
   const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
-  const setupTx = new Transaction().add(createIx, extendIx);
-  addMemoToLegacyTransaction(setupTx, `create-pool-alt:${pool.toBase58()}`, wallet.publicKey);
-  await provider.sendAndConfirm(setupTx);
+
+  // Send create in its own transaction — combining create + extend risks hitting
+  // the 1232-byte legacy tx limit when there are many claimers/addresses.
+  const createTx = new Transaction().add(createIx);
+  addMemoToLegacyTransaction(createTx, `create-pool-alt:${pool.toBase58()}`, wallet.publicKey);
+  await provider.sendAndConfirm(createTx);
+
+  // Extend in batches of 20 addresses to stay safely under the tx size limit.
+  // Each address is 32 bytes; 20 × 32 = 640 bytes leaving ample room for
+  // instruction overhead, memo, and signatures within the 1232-byte limit.
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < allAddresses.length; i += BATCH_SIZE) {
+    const batch = allAddresses.slice(i, i + BATCH_SIZE);
+    const extendIx = AddressLookupTableProgram.extendLookupTable({
+      payer: wallet.publicKey,
+      authority: wallet.publicKey,
+      lookupTable: tableAddress,
+      addresses: batch,
+    });
+    const extendTx = new Transaction().add(extendIx);
+    await provider.sendAndConfirm(extendTx);
+  }
 
   // Wait for ALT to be visible on-chain before returning.
   // On devnet ~1s is enough; on mainnet the ALT warmup is ~1 epoch so the
