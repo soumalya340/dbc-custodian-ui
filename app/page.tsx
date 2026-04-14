@@ -213,7 +213,7 @@ const ADMIN_FUNCTIONS: FunctionDef[] = [
   {
     id: 'admin_locked_amount_withdraw',
     number: '3C',
-    title: 'ADMIN LOCKED AMOUNT WITHDRAW',
+    title: 'Admin Locked Asset Recovery & Distribution',
     description:
       'Admin-only. Moves tokens from a registered claimer’s pending vaults (locked amounts, e.g. after distributeFees parked funds for a disabled claimer) into the recipient’s base and quote ATAs. Creates recipient ATAs if needed, then sweeps.',
     fields: [
@@ -238,7 +238,7 @@ const ADMIN_FUNCTIONS: FunctionDef[] = [
         placeholder: 'Wallet that receives the swept tokens (destination ATAs)',
       },
     ],
-    submitLabel: 'ADMIN LOCKED AMOUNT WITHDRAW',
+    submitLabel: 'Admin Locked Amount Withdraw and Transfer',
   },
   {
     id: 'set_claimer_status',

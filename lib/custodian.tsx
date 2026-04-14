@@ -15,6 +15,7 @@ import {
   VersionedTransaction,
   TransactionMessage,
 } from '@solana/web3.js';
+import { createMemoInstruction } from '@solana/spl-memo';
 import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
@@ -108,6 +109,81 @@ function deriveClaimerPendingQuoteVault(pool: PublicKey, claimer: PublicKey): Pu
   );
   return pda;
 }
+
+// ─── Memo helpers (improves on-chain indexability) ───────────────────────────
+
+/**
+ * Appends a memo instruction to a legacy {@link Transaction}.
+ * The memo is recorded on-chain and makes the tx trivially indexable by label.
+ *
+ * @param tx     - The legacy transaction to mutate in-place.
+ * @param memo   - UTF-8 string to embed (max ~566 bytes after base58 encoding).
+ * @param signer - Optional signer public key to attach to the memo instruction.
+ *                 When provided, the memo program will verify the signature.
+ */
+export function addMemoToLegacyTransaction(
+  tx: Transaction,
+  memo: string,
+  signer?: PublicKey,
+): void {
+  const memoIx = createMemoInstruction(
+    memo,
+    signer ? [signer] : [],
+  );
+  tx.add(memoIx);
+}
+
+/**
+ * Returns a new {@link VersionedTransaction} with a memo instruction appended
+ * to the inner message's instruction list.
+ * Versioned transactions are immutable after construction, so we rebuild the
+ * message from the existing instructions + the new memo instruction.
+ *
+ * @param vt          - The versioned transaction to extend.
+ * @param memo        - UTF-8 string to embed (max ~566 bytes after base58 encoding).
+ * @param feePayer    - Fee payer public key (required to reconstruct the message).
+ * @param connection  - Used to fetch a fresh blockhash for the rebuilt message.
+ * @param signer      - Optional signer public key to attach to the memo instruction.
+ */
+export async function addMemoToVersionedTransaction(
+  vt: VersionedTransaction,
+  memo: string,
+  feePayer: PublicKey,
+  connection: Connection,
+  signer?: PublicKey,
+): Promise<VersionedTransaction> {
+  const memoIx = createMemoInstruction(
+    memo,
+    signer ? [signer] : [],
+  );
+
+  // Decompose the existing compiled message back into instructions.
+  const msg = vt.message;
+  const existingIxs = msg.compiledInstructions.map((ci) => ({
+    programId: msg.staticAccountKeys[ci.programIdIndex],
+    keys: ci.accountKeyIndexes.map((idx) => ({
+      pubkey: msg.staticAccountKeys[idx],
+      isSigner: msg.isAccountSigner(idx),
+      isWritable: msg.isAccountWritable(idx),
+    })),
+    data: Buffer.from(ci.data),
+  }));
+
+  const { blockhash } = await connection.getLatestBlockhash();
+
+  const newMessage = new TransactionMessage({
+    payerKey: feePayer,
+    recentBlockhash: blockhash,
+    instructions: [...existingIxs, memoIx],
+  }).compileToV0Message();
+  // Note: ALT accounts cannot be reconstructed here without fetching them from
+  // chain; memo instructions never require ALTs, and all static accounts from
+  // the original message are already inlined in existingIxs above.
+
+  return new VersionedTransaction(newMessage);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 type ClaimerRemainingAccountMeta = {
   pubkey: PublicKey;
@@ -351,6 +427,7 @@ async function createPoolAlt(
 
   const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
   const setupTx = new Transaction().add(createIx, extendIx);
+  addMemoToLegacyTransaction(setupTx, `create-pool-alt:${pool.toBase58()}`, wallet.publicKey);
   await provider.sendAndConfirm(setupTx);
 
   // Wait for ALT to be visible on-chain before returning.
@@ -364,81 +441,66 @@ async function createPoolAlt(
 }
 
 /**
- * Sends a transaction using v0 format + ALT if altAddress is provided,
- * otherwise falls back to legacy transaction format.
+ * Sends a versioned (v0) transaction using the provided ALT.
+ * altAddress is required — this function never falls back to legacy format.
  */
 async function sendV0Transaction(
   connection: Connection,
   wallet: AnchorWallet,
   instructions: import('@solana/web3.js').TransactionInstruction[],
-  altAddress: string | undefined,
+  altAddress: string,
   sendTransaction?: (
-    tx: Transaction | VersionedTransaction,
+    tx: VersionedTransaction,
     connection: Connection,
     options?: { skipPreflight?: boolean; maxRetries?: number },
   ) => Promise<string>,
 ): Promise<{ sig: string; blockhash: string; lastValidBlockHeight: number }> {
-  const latest = await connection.getLatestBlockhash('confirmed');
-
-  if (altAddress) {
-    const altPubkey = new PublicKey(altAddress);
-    const altResult = await connection.getAddressLookupTable(altPubkey);
-
-    if (!altResult.value) {
-      throw new Error(`ALT not found on-chain: ${altAddress}. It may not have propagated yet — wait a moment and retry.`);
-    }
-
-    // Check ALT is not deactivated
-    // deactivationSlot is u64::MAX (18446744073709551615n) when active
-    if (altResult.value.state.deactivationSlot !== BigInt('18446744073709551615')) {
-      throw new Error(`ALT ${altAddress} has been deactivated and cannot be used.`);
-    }
-
-    // Check ALT warmup: lastExtendedSlot must be < current finalized slot
-    const currentSlot = await connection.getSlot('finalized');
-    if (altResult.value.state.lastExtendedSlot >= currentSlot) {
-      throw new Error(
-        `ALT not yet active. Extended at slot ${altResult.value.state.lastExtendedSlot}, ` +
-        `current finalized slot ${currentSlot}. Wait a few slots (devnet) or ~1 epoch (mainnet) and retry.`,
-      );
-    }
-
-    const message = new TransactionMessage({
-      payerKey: wallet.publicKey,
-      recentBlockhash: latest.blockhash,
-      instructions,
-    }).compileToV0Message([altResult.value]);
-
-    const vtx = new VersionedTransaction(message);
-
-    let sig: string;
-    if (sendTransaction) {
-      sig = await sendTransaction(vtx as unknown as Transaction, connection, {
-        skipPreflight: false,
-        maxRetries: 3,
-      });
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const signed = await (wallet as any).signTransaction(vtx);
-      sig = await connection.sendRawTransaction(signed.serialize(), {
-        skipPreflight: false,
-        maxRetries: 3,
-      });
-    }
-
-    return { sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight };
+  if (!altAddress) {
+    throw new Error('sendV0Transaction requires an ALT address — versioned transaction cannot be built without one.');
   }
 
-  // ── Legacy fallback (no ALT) ──
-  const tx = new Transaction().add(...instructions);
-  tx.recentBlockhash = latest.blockhash;
-  tx.feePayer = wallet.publicKey;
+  const latest = await connection.getLatestBlockhash('confirmed');
+
+  const altPubkey = new PublicKey(altAddress);
+  const altResult = await connection.getAddressLookupTable(altPubkey);
+
+  if (!altResult.value) {
+    throw new Error(`ALT not found on-chain: ${altAddress}. It may not have propagated yet — wait a moment and retry.`);
+  }
+
+  // Check ALT is not deactivated
+  // deactivationSlot is u64::MAX (18446744073709551615n) when active
+  if (altResult.value.state.deactivationSlot !== BigInt('18446744073709551615')) {
+    throw new Error(`ALT ${altAddress} has been deactivated and cannot be used.`);
+  }
+
+  // Check ALT warmup: lastExtendedSlot must be < current finalized slot
+  const currentSlot = await connection.getSlot('finalized');
+  if (altResult.value.state.lastExtendedSlot >= currentSlot) {
+    throw new Error(
+      `ALT not yet active. Extended at slot ${altResult.value.state.lastExtendedSlot}, ` +
+      `current finalized slot ${currentSlot}. Wait a few slots (devnet) or ~1 epoch (mainnet) and retry.`,
+    );
+  }
+
+  const memoIxV0 = createMemoInstruction('dbc-custodian:send-v0', [wallet.publicKey]);
+  const message = new TransactionMessage({
+    payerKey: wallet.publicKey,
+    recentBlockhash: latest.blockhash,
+    instructions: [...instructions, memoIxV0],
+  }).compileToV0Message([altResult.value]);
+
+  const vtx = new VersionedTransaction(message);
 
   let sig: string;
   if (sendTransaction) {
-    sig = await sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
+    sig = await sendTransaction(vtx, connection, {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
   } else {
-    const signed = await wallet.signTransaction(tx);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const signed = await (wallet as any).signTransaction(vtx);
     sig = await connection.sendRawTransaction(signed.serialize(), {
       skipPreflight: false,
       maxRetries: 3,
@@ -810,6 +872,7 @@ export async function initializePoolClaimers(
       systemProgram: SystemProgram.programId,
     })
     .remainingAccounts(initRemaining)
+    .preInstructions([createMemoInstruction(`init-pool-claimers:${pool.toBase58()}`, [wallet.publicKey])])
     .rpc();
 
   // ── Create ALT right after pool claimers are initialized ──
@@ -876,6 +939,7 @@ export async function updateClaimersBps(
       pool,
       poolClaimers: poolClaimersPdaPubKey,
     })
+    .preInstructions([createMemoInstruction(`update-claimers-bps:${pool.toBase58()}`, [wallet.publicKey])])
     .rpc();
 
   return { tx: sig, link: solscanLink(sig, params.network) };
@@ -906,6 +970,7 @@ export async function setClaimerEnabled(
       claimer,
       claimerState,
     })
+    .preInstructions([createMemoInstruction(`set-claimer-enabled:${pool.toBase58()}:${claimer.toBase58()}:${params.isEnabled}`, [wallet.publicKey])])
     .rpc();
 
   return { tx: sig, link: solscanLink(sig, params.network) };
@@ -953,6 +1018,7 @@ export async function adminSweepClaimer(
 
   const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
   const createAtaTransaction = new Transaction().add(...createAtaIxs);
+  addMemoToLegacyTransaction(createAtaTransaction, `admin-sweep-create-atas:${pool.toBase58()}`, wallet.publicKey);
   const ataTx = await provider.sendAndConfirm(createAtaTransaction);
 
   const sig: string = await programMethods(program)
@@ -971,6 +1037,7 @@ export async function adminSweepClaimer(
       tokenBaseProgram,
       tokenQuoteProgram,
     })
+    .preInstructions([createMemoInstruction(`admin-sweep-claimer:${pool.toBase58()}:${claimer.toBase58()}`, [wallet.publicKey])])
     .rpc();
 
   return { tx: sig, link: solscanLink(sig, params.network), ataTx };
@@ -1076,6 +1143,7 @@ export async function claimDbcPartnerFee(
       const latest = await connection.getLatestBlockhash('confirmed');
       tx.recentBlockhash = latest.blockhash;
       tx.feePayer = wallet.publicKey;
+      addMemoToLegacyTransaction(tx, `claim-dbc-partner-fee:${pool.toBase58()}`, wallet.publicKey);
 
       if (params.sendTransaction) {
         sig = await params.sendTransaction(tx, connection, { skipPreflight: false, maxRetries: 3 });
@@ -1151,6 +1219,7 @@ export async function claimDammV2PositionFee(
       payer: wallet.publicKey,
       feeClaimer: feeClaimerPda,
     })
+    .preInstructions([createMemoInstruction(`claim-damm-v2-position-fee:${pool.toBase58()}`, [wallet.publicKey])])
     .rpc();
 
   return { tx: sig, link: solscanLink(sig, params.network) };
@@ -1198,6 +1267,7 @@ export async function distributeFees(
   if (createAtaIxs.length > 0) {
     const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
     const createAtaTransaction = new Transaction().add(...createAtaIxs);
+    addMemoToLegacyTransaction(createAtaTransaction, `distribute-fees-create-atas:${pool.toBase58()}`, wallet.publicKey);
     ataTx = await provider.sendAndConfirm(createAtaTransaction);
   }
 
@@ -1222,6 +1292,7 @@ export async function distributeFees(
       tokenQuoteProgram: quoteTokenProgram,
     })
     .remainingAccounts(remainingAccounts)
+    .preInstructions([createMemoInstruction(`distribute-fees:${pool.toBase58()}`, [wallet.publicKey])])
     .rpc();
 
   return { tx: sig, link: solscanLink(sig, params.network), ataTx };
@@ -1237,7 +1308,7 @@ export async function claimAndDistributeFeesDbc(
     network: 'devnet' | 'mainnet';
     altAddress: string;
     sendTransaction?: (
-      tx: Transaction | VersionedTransaction,
+      tx: VersionedTransaction,
       connection: Connection,
       options?: { skipPreflight?: boolean; maxRetries?: number },
     ) => Promise<string>;
@@ -1356,7 +1427,7 @@ export async function claimAndDistributeFeesDammV2(
     network: 'devnet' | 'mainnet';
     altAddress: string;
     sendTransaction?: (
-      tx: Transaction | VersionedTransaction,
+      tx: VersionedTransaction,
       connection: Connection,
       options?: { skipPreflight?: boolean; maxRetries?: number },
     ) => Promise<string>;
