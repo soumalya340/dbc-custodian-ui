@@ -113,7 +113,7 @@ The single transaction contains, in order:
 2. Idempotent ATA creation instructions for each registered claimer (base + quote token accounts).
 3. `distributeFees` — proportionally splits vault balances to all enabled claimers by BPS.
 
-Input: **DBC pool address** only. The function validates the pool is owned by `DBC_PROGRAM_ID`, fetches on-chain pool and claimer state, builds all instructions, and sends as one atomic transaction. Disabled claimers still have their share routed to pending vaults (same behaviour as **2D** / **3D** / **3C**).
+Input: **DBC pool address** and **ALT address**. The function validates the pool is owned by `DBC_PROGRAM_ID`, fetches on-chain pool and claimer state, builds all instructions, and sends as one atomic versioned transaction. Disabled claimers still have their share routed to pending vaults (same behaviour as **2D** / **3D** / **3C**).
 
 #### 2F — Claim + Distribute DAMM v2 Fees (One Tx) (details)
 
@@ -124,7 +124,23 @@ The single transaction contains, in order:
 2. Idempotent ATA creation instructions for each registered claimer (base + quote token accounts).
 3. `distributeFees` — proportionally splits vault balances to all enabled claimers by BPS.
 
-Input: **DAMM v2 pool address** only. Disabled claimers still have their share routed to pending vaults (same behaviour as **2D** / **3D** / **3C**).
+Input: **DAMM v2 pool address** and **ALT address**. Disabled claimers still have their share routed to pending vaults (same behaviour as **2D** / **3D** / **3C**).
+
+## Additional Note :
+
+#### ALT Requirement for Bundled Claim+Distribute (2E / 2F)
+
+Address Lookup Table (ALT) is part of the bundled transaction workflow and is required for:
+- **2E — Claim + Distribute DBC Fees (One Tx)**
+- **2F — Claim + Distribute DAMM v2 Fees (One Tx)**
+
+ALT is initialized during **3A — Set Pool Claimers** (`initializePoolClaimers` flow):
+- First transaction: initialize pool claimers on-chain.
+- Then ALT setup runs immediately after as **two additional signed transactions**:
+  1. create + first extend
+  2. remaining extend batch(es)
+
+So during initial setup, the admin signs the initialize transaction plus the extra ALT transactions. End users should copy the returned ALT address from **3A** and provide it when running **2E** or **2F**.
 
 ---
 

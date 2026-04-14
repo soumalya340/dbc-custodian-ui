@@ -151,7 +151,7 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
     description: 'One-shot for end users — claims DBC partner trading fees, creates any missing claimer ATAs, and distributes to all registered claimers in a single transaction (single wallet signature).',
     fields: [
       { name: 'pool_address', label: 'DBC Pool Address', placeholder: 'DBC pool pubkey' },
-      { name: 'alt_address', label: 'ALT Address (optional)', placeholder: 'Address Lookup Table pubkey — leave blank to skip' },
+      { name: 'alt_address', label: 'ALT Address (required)', placeholder: 'Address Lookup Table pubkey from Set Pool Claimers result' },
     ],
     submitLabel: 'Claim + Distribute (DBC)',
   },
@@ -162,7 +162,7 @@ const NON_ADMIN_FUNCTIONS: FunctionDef[] = [
     description: 'One-shot for end users — claims DAMM v2 LP position fees into the vault, creates any missing claimer ATAs, and distributes to all registered claimers in a single transaction (single wallet signature).',
     fields: [
       { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
-      { name: 'alt_address', label: 'ALT Address (optional)', placeholder: 'Address Lookup Table pubkey — leave blank to skip' },
+      { name: 'alt_address', label: 'ALT Address (required)', placeholder: 'Address Lookup Table pubkey from Set Pool Claimers result' },
     ],
     submitLabel: 'Claim + Distribute (DAMM v2)',
   },
@@ -616,7 +616,7 @@ function AccordionItem({
 }) {
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
-  const [result, setResult] = useState<{ type: 'info' | 'success' | 'error'; text: string; solscan?: string } | null>(null);
+  const [result, setResult] = useState<{ type: 'info' | 'success' | 'error'; text: string; solscan?: string; altAddress?: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   const { connection } = useConnection();
@@ -692,20 +692,22 @@ function AccordionItem({
         });
         data = { tx: r.tx, solscan: r.link, ataTx: r.ataTx };
       } else if (fn.id === 'claim_and_distribute_dbc') {
-        if (!values.alt_address) throw new Error('ALT Address is required — copy it from the Set Pool Claimers result.');
+        const altAddress = values.alt_address?.trim();
+        if (!altAddress) throw new Error('ALT Address is required — copy it from the Set Pool Claimers result.');
         const r = await claimAndDistributeFeesDbc(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           network: net,
-          altAddress: values.alt_address,
+          altAddress,
           sendTransaction,
         });
         data = { tx: r.tx, solscan: r.link };
       } else if (fn.id === 'claim_and_distribute_dammv2') {
-        if (!values.alt_address) throw new Error('ALT Address is required — copy it from the Set Pool Claimers result.');
+        const altAddress = values.alt_address?.trim();
+        if (!altAddress) throw new Error('ALT Address is required — copy it from the Set Pool Claimers result.');
         const r = await claimAndDistributeFeesDammV2(connection, anchorWallet!, {
           poolAddress: values.pool_address,
           network: net,
-          altAddress: values.alt_address,
+          altAddress,
           sendTransaction,
         });
         data = { tx: r.tx, solscan: r.link };
@@ -725,7 +727,7 @@ function AccordionItem({
           claimers,
           network: net,
         });
-        data = { tx: r.tx, solscan: r.link };
+        data = { tx: r.tx, solscan: r.link, altAddress: r.altAddress };
       } else if (fn.id === 'update_claimers_bps') {
         let claimers: { address: string; bps: number }[];
         try {
@@ -762,10 +764,15 @@ function AccordionItem({
         data && typeof data === 'object' && 'solscan' in data
           ? (data as { solscan: string }).solscan
           : undefined;
-      const displayData = solscanUrl
-        ? { ...((data as object)), solscan: undefined }
-        : data;
-      setResult({ type: 'success', text: formatResult(displayData), solscan: solscanUrl });
+      const altAddressVal =
+        data && typeof data === 'object' && 'altAddress' in data
+          ? (data as { altAddress: string }).altAddress
+          : undefined;
+      const displayData =
+        data && typeof data === 'object'
+          ? { ...(data as object), solscan: undefined, altAddress: undefined }
+          : data;
+      setResult({ type: 'success', text: formatResult(displayData), solscan: solscanUrl, altAddress: altAddressVal });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const isRejection =
@@ -941,6 +948,19 @@ function AccordionItem({
               }}
             >
               {result.text}
+              {result.altAddress && (
+                <div className="mt-3 pt-2" style={{ borderTop: '1px solid #14532d' }}>
+                  <div className="text-xs font-semibold mb-1" style={{ color: '#4ade80' }}>
+                    ALT Address — copy this into the claim functions below:
+                  </div>
+                  <div
+                    className="rounded px-3 py-2 text-xs font-mono break-all select-all cursor-text"
+                    style={{ background: '#0d2010', border: '1px solid #166534', color: '#86efac' }}
+                  >
+                    {result.altAddress}
+                  </div>
+                </div>
+              )}
               {result.solscan && (
                 <div className="mt-2 pt-2" style={{ borderTop: '1px solid #14532d' }}>
                   <a

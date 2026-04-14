@@ -420,17 +420,21 @@ async function createPoolAlt(
 
   const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
 
-  // Send create in its own transaction — combining create + extend risks hitting
-  // the 1232-byte legacy tx limit when there are many claimers/addresses.
-  const createTx = new Transaction().add(createIx);
-  addMemoToLegacyTransaction(createTx, `create-pool-alt:${pool.toBase58()}`, wallet.publicKey);
-  await provider.sendAndConfirm(createTx);
+  const BATCH_SIZE = 25;
 
-  // Extend in batches of 20 addresses to stay safely under the tx size limit.
-  // Each address is 32 bytes; 20 × 32 = 640 bytes leaving ample room for
-  // instruction overhead, memo, and signatures within the 1232-byte limit.
-  const BATCH_SIZE = 20;
-  for (let i = 0; i < allAddresses.length; i += BATCH_SIZE) {
+  const firstBatch = allAddresses.slice(0, BATCH_SIZE);
+  const firstExtendIx = AddressLookupTableProgram.extendLookupTable({
+    payer: wallet.publicKey,
+    authority: wallet.publicKey,
+    lookupTable: tableAddress,
+    addresses: firstBatch,
+  });
+  const createAndExtendTx = new Transaction().add(createIx, firstExtendIx);
+  addMemoToLegacyTransaction(createAndExtendTx, `create-pool-alt:${pool.toBase58()}`, wallet.publicKey);
+  await provider.sendAndConfirm(createAndExtendTx);
+
+  // Remaining batches — ideally just 1 more tx for typical claimer counts
+  for (let i = BATCH_SIZE; i < allAddresses.length; i += BATCH_SIZE) {
     const batch = allAddresses.slice(i, i + BATCH_SIZE);
     const extendIx = AddressLookupTableProgram.extendLookupTable({
       payer: wallet.publicKey,
@@ -441,7 +445,6 @@ async function createPoolAlt(
     const extendTx = new Transaction().add(extendIx);
     await provider.sendAndConfirm(extendTx);
   }
-
   // Wait for ALT to be visible on-chain before returning.
   // On devnet ~1s is enough; on mainnet the ALT warmup is ~1 epoch so the
   // admin must save the altAddress and only pass it to claimAndDistribute
@@ -456,6 +459,114 @@ async function createPoolAlt(
  * Sends a versioned (v0) transaction using the provided ALT.
  * altAddress is required — this function never falls back to legacy format.
  */
+type SendV0Context = {
+  flow?: 'claim_and_distribute_dbc' | 'claim_and_distribute_dammv2';
+  poolAddress?: string;
+};
+
+const U64_MAX = BigInt('18446744073709551615');
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractErrorLogs(error: any): string[] {
+  const candidates: unknown[] = [];
+  const pushLogs = (value: unknown): void => {
+    if (Array.isArray(value)) candidates.push(...value);
+  };
+
+  pushLogs(error?.logs);
+  pushLogs(error?.transactionLogs);
+  pushLogs(error?.cause?.logs);
+  pushLogs(error?.cause?.transactionLogs);
+  pushLogs(error?.error?.logs);
+  pushLogs(error?.error?.transactionLogs);
+
+  const logs = candidates
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => entry.trim());
+  return Array.from(new Set(logs)).slice(0, 25);
+}
+
+function extractErrorMessages(error: unknown): string[] {
+  const seen = new Set<unknown>();
+  const out: string[] = [];
+
+  const walk = (value: unknown): void => {
+    if (value == null || seen.has(value)) return;
+    seen.add(value);
+
+    if (typeof value === 'string') {
+      if (value.trim()) out.push(value.trim());
+      return;
+    }
+
+    if (value instanceof Error) {
+      if (value.message.trim()) out.push(value.message.trim());
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const maybeAny = value as any;
+      walk(maybeAny.cause);
+      walk(maybeAny.error);
+      return;
+    }
+
+    if (typeof value === 'object') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const maybeAny = value as any;
+      if (typeof maybeAny.message === 'string' && maybeAny.message.trim()) out.push(maybeAny.message.trim());
+      if (typeof maybeAny.toString === 'function') {
+        const rendered = maybeAny.toString();
+        if (typeof rendered === 'string' && rendered !== '[object Object]' && rendered.trim()) out.push(rendered.trim());
+      }
+      walk(maybeAny.cause);
+      walk(maybeAny.error);
+    }
+  };
+
+  walk(error);
+  return Array.from(new Set(out)).slice(0, 8);
+}
+
+function formatSendV0Error(
+  error: unknown,
+  altAddress: string,
+  context?: SendV0Context,
+): Error {
+  const messages = extractErrorMessages(error);
+  const logs = extractErrorLogs(error);
+  const primary = messages[0] ?? 'unknown wallet adapter error';
+  const contextPrefix = context?.flow
+    ? `[${context.flow}]${context.poolAddress ? ` pool=${context.poolAddress}` : ''}`
+    : '[claim_and_distribute]';
+
+  const combinedText = `${messages.join(' ')} ${logs.join(' ')}`.toLowerCase();
+  const likelyAltAccountIssue =
+    combinedText.includes('invalid account')
+    || combinedText.includes('invalid index')
+    || combinedText.includes('address table lookup')
+    || combinedText.includes('account not found');
+
+  const detailLines = [
+    `${contextPrefix} Failed to send v0 transaction with ALT ${altAddress}.`,
+    `Wallet error: ${primary}`,
+  ];
+
+  if (messages.length > 1) {
+    detailLines.push(`Error details: ${messages.slice(1).join(' | ')}`);
+  }
+
+  if (logs.length > 0) {
+    detailLines.push(`Program logs: ${logs.join(' | ')}`);
+  }
+
+  if (likelyAltAccountIssue) {
+    detailLines.push(
+      'Likely cause: ALT does not match the required account set for this pool/mode (stale, wrong pool, or incomplete table).',
+    );
+    detailLines.push('Action: regenerate the ALT from Set Pool Claimers and retry after ALT warmup.');
+  }
+
+  return new Error(detailLines.join('\n'));
+}
+
 async function sendV0Transaction(
   connection: Connection,
   wallet: AnchorWallet,
@@ -466,24 +577,31 @@ async function sendV0Transaction(
     connection: Connection,
     options?: { skipPreflight?: boolean; maxRetries?: number },
   ) => Promise<string>,
+  context?: SendV0Context,
 ): Promise<{ sig: string; blockhash: string; lastValidBlockHeight: number }> {
-  if (!altAddress) {
+  if (!altAddress || altAddress.trim().length === 0) {
     throw new Error('sendV0Transaction requires an ALT address — versioned transaction cannot be built without one.');
   }
+  const normalizedAltAddress = altAddress.trim();
 
   const latest = await connection.getLatestBlockhash('confirmed');
 
-  const altPubkey = new PublicKey(altAddress);
+  let altPubkey: PublicKey;
+  try {
+    altPubkey = new PublicKey(normalizedAltAddress);
+  } catch {
+    throw new Error(`Invalid ALT address: "${normalizedAltAddress}". Please provide a valid lookup table pubkey.`);
+  }
   const altResult = await connection.getAddressLookupTable(altPubkey);
 
   if (!altResult.value) {
-    throw new Error(`ALT not found on-chain: ${altAddress}. It may not have propagated yet — wait a moment and retry.`);
+    throw new Error(`ALT not found on-chain: ${normalizedAltAddress}. It may not have propagated yet — wait a moment and retry.`);
   }
 
   // Check ALT is not deactivated
   // deactivationSlot is u64::MAX (18446744073709551615n) when active
-  if (altResult.value.state.deactivationSlot !== BigInt('18446744073709551615')) {
-    throw new Error(`ALT ${altAddress} has been deactivated and cannot be used.`);
+  if (altResult.value.state.deactivationSlot !== U64_MAX) {
+    throw new Error(`ALT ${normalizedAltAddress} has been deactivated and cannot be used.`);
   }
 
   // Check ALT warmup: lastExtendedSlot must be < current finalized slot
@@ -504,22 +622,31 @@ async function sendV0Transaction(
 
   const vtx = new VersionedTransaction(message);
 
-  let sig: string;
-  if (sendTransaction) {
-    sig = await sendTransaction(vtx, connection, {
-      skipPreflight: false,
-      maxRetries: 3,
+  try {
+    let sig: string;
+    if (sendTransaction) {
+      sig = await sendTransaction(vtx, connection, {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signed = await (wallet as any).signTransaction(vtx);
+      sig = await connection.sendRawTransaction(signed.serialize(), {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+    }
+    return { sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight };
+  } catch (error) {
+    console.error('[sendV0Transaction] failed', {
+      altAddress: normalizedAltAddress,
+      flow: context?.flow ?? 'unknown',
+      poolAddress: context?.poolAddress ?? 'unknown',
+      error,
     });
-  } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const signed = await (wallet as any).signTransaction(vtx);
-    sig = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+    throw formatSendV0Error(error, normalizedAltAddress, context);
   }
-
-  return { sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight };
 }
 
 // ─── Program factory ─────────────────────────────────────────────────────────
@@ -1419,6 +1546,7 @@ export async function claimAndDistributeFeesDbc(
     [claimIx, ...createAtaIxs, distributeIx],
     params.altAddress,
     params.sendTransaction,
+    { flow: 'claim_and_distribute_dbc', poolAddress: params.poolAddress },
   );
 
   await connection.confirmTransaction(
@@ -1533,6 +1661,7 @@ export async function claimAndDistributeFeesDammV2(
     [claimIx, ...createAtaIxs, distributeIx],
     params.altAddress,
     params.sendTransaction,
+    { flow: 'claim_and_distribute_dammv2', poolAddress: params.poolAddress },
   );
 
   await connection.confirmTransaction(
