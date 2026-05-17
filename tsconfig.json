@@ -31,5 +31,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "dbc-custodian"]
+  "exclude": ["node_modules", "dbc-custodian", "deps"]
 }

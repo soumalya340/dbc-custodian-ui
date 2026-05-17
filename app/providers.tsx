@@ -1,6 +1,4 @@
 'use client';
-import dotenv from 'dotenv';
-dotenv.config();
 
 // Polyfill Buffer for Turbopack builds (ProvidePlugin only runs under webpack).
 // Must be at module top so it runs before any Solana library import.
