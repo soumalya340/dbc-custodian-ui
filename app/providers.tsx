@@ -1,4 +1,6 @@
 'use client';
+import dotenv from 'dotenv';
+dotenv.config();
 
 // Polyfill Buffer for Turbopack builds (ProvidePlugin only runs under webpack).
 // Must be at module top so it runs before any Solana library import.
@@ -18,7 +20,7 @@ import '@solana/wallet-adapter-react-ui/styles.css';
 // Override via env vars in your deployment platform (Vercel, Netlify, etc.):
 // NEXT_PUBLIC_RPC_DEVNET, NEXT_PUBLIC_RPC_MAINNET
 const DEFAULT_DEVNET = 'https://api.devnet.solana.com';
-const DEFAULT_MAINNET = 'https://mainnet.helius-rpc.com/?api-key=54858719-0674-4259-8bab-a4f159d95d22';
+const DEFAULT_MAINNET = process.env.NEXT_PUBLIC_RPC_MAINNET ?? "https://api.mainnet.solana.com";
 
 export function getRpcEndpoint(network: 'devnet' | 'mainnet'): string {
   const devnet = process.env.NEXT_PUBLIC_RPC_DEVNET ?? DEFAULT_DEVNET;
