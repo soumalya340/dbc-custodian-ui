@@ -14,6 +14,9 @@ import {
   updateClaimersBps,
   setClaimerEnabled,
   adminSweepClaimer,
+  removeAllLiquidity,
+  removeLiquidity,
+  type RemoveLiquidityResult,
   claimDbcPartnerFee,
   claimDammV2PositionFee,
   distributeFees,
@@ -31,7 +34,7 @@ interface FieldDef {
   name: string;
   label: string;
   placeholder?: string;
-  type?: 'text' | 'number' | 'select' | 'textarea' | 'claimers' | 'claimers_live';
+  type?: 'text' | 'number' | 'select' | 'textarea' | 'claimers' | 'claimers_live' | 'liquidity_bps';
   options?: { label: string; value: string }[];
   hint?: string;
 }
@@ -272,6 +275,42 @@ const ADMIN_FUNCTIONS: FunctionDef[] = [
     ],
     submitLabel: 'Set Claim Status',
   },
+  {
+    id: 'remove_all_liquidity',
+    number: '3E',
+    title: 'Remove All Liquidity',
+    description:
+      'Admin-only. Removes ALL unlocked liquidity from the vault-owned DAMM v2 position for a given pool. Withdrawn tokens are sent to the admin wallet\'s ATAs (created automatically). Permanently locked liquidity is not affected. Set thresholds to 0 to accept any amount (no slippage guard).',
+    fields: [
+      { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
+      {
+        name: 'token_a_amount_threshold',
+        label: 'Min Token A Out (0 = no slippage guard)',
+        type: 'number',
+        placeholder: '0',
+        hint: 'Raw token units. Set to 0 to accept any amount.',
+      },
+      {
+        name: 'token_b_amount_threshold',
+        label: 'Min Token B Out (0 = no slippage guard)',
+        type: 'number',
+        placeholder: '0',
+        hint: 'Raw token units. Set to 0 to accept any amount.',
+      },
+    ],
+    submitLabel: 'Remove All Liquidity',
+  },
+  {
+    id: 'remove_liquidity',
+    number: '3F',
+    title: 'Remove Liquidity (Partial)',
+    description:
+      'Admin-only. Removes a percentage of the vault-owned DAMM v2 position\'s unlocked liquidity. Enter a pool address to see live reserves, then choose how much to remove in BPS. Tokens are sent to the admin wallet automatically.',
+    fields: [
+      { name: 'bps', type: 'liquidity_bps', label: '' },
+    ],
+    submitLabel: 'Remove Liquidity',
+  },
 ];
 
 // ─── Section colors ──────────────────────────────────────────────────────────
@@ -288,6 +327,7 @@ const REQUIRES_WALLET = new Set([
   'create_config_and_pool', 'claim_dbc_fee', 'claim_dammv2_fee', 'distribute_fees',
   'claim_and_distribute_dbc', 'claim_and_distribute_dammv2',
   'set_pool_claimers', 'update_claimers_bps', 'admin_locked_amount_withdraw', 'set_claimer_status',
+  'remove_all_liquidity', 'remove_liquidity',
 ]);
 
 function formatResult(data: unknown): string {
@@ -614,6 +654,163 @@ function ClaimersLiveInput({
   );
 }
 
+// ─── Liquidity BPS Input ─────────────────────────────────────────────────────
+// Shows pool address input + "Fetch" button → displays live base/quote reserves
+// → then reveals the BPS input. Used exclusively for 3F Remove Liquidity.
+
+interface LiquidityPreview {
+  baseMintSymbol: string;
+  baseMintAmount: string;
+  quoteMintSymbol: string;
+  quoteMintAmount: string;
+  unlockedLiquidity: string;
+  permanentLockLiquidity: string;
+}
+
+function LiquidityBpsInput({
+  poolAddress,
+  onPoolAddressChange,
+  bpsValue,
+  onBpsChange,
+  accent,
+  connection,
+}: {
+  poolAddress: string;
+  onPoolAddressChange: (v: string) => void;
+  bpsValue: string;
+  onBpsChange: (v: string) => void;
+  accent: string;
+  connection: import('@solana/web3.js').Connection;
+}) {
+  const [preview, setPreview] = useState<LiquidityPreview | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const fetchLiquidity = async () => {
+    if (!poolAddress.trim()) {
+      setFetchError('Enter a DAMM v2 Pool Address first.');
+      return;
+    }
+    setFetching(true);
+    setFetchError(null);
+    setPreview(null);
+    try {
+      const info = await viewDammV2PoolInfo(connection, poolAddress.trim());
+      setPreview({
+        baseMintSymbol: info.baseMint.symbol,
+        baseMintAmount: `${info.baseMint.reserveAmount} ${info.baseMint.symbol}`,
+        quoteMintSymbol: info.quoteMint.symbol,
+        quoteMintAmount: `${info.quoteMint.reserveAmount} ${info.quoteMint.symbol}`,
+        unlockedLiquidity: info.liquidity,
+        permanentLockLiquidity: info.permanentLockLiquidity,
+      });
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const bpsNum = Number(bpsValue) || 0;
+  const bpsValid = bpsNum >= 1 && bpsNum <= 10000;
+
+  return (
+    <div className="sm:col-span-2 space-y-3">
+      {/* Pool address + fetch */}
+      <div>
+        <label className="block text-xs font-medium text-slate-300 mb-1">DAMM v2 Pool Address</label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="DAMM v2 pool pubkey"
+            value={poolAddress}
+            onChange={e => { onPoolAddressChange(e.target.value); setPreview(null); setFetchError(null); }}
+            className="flex-1 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600"
+            style={{ background: '#161626', border: '1px solid #2a2a40' }}
+          />
+          <button
+            type="button"
+            onClick={fetchLiquidity}
+            disabled={fetching}
+            className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ background: accent + '22', color: accent, border: `1px solid ${accent}55` }}
+          >
+            {fetching ? (
+              <><span className="inline-block w-3 h-3 border-2 border-current/30 border-t-current rounded-full animate-spin" />Fetching...</>
+            ) : preview ? 'Refresh' : 'Fetch Liquidity'}
+          </button>
+        </div>
+      </div>
+
+      {fetchError && (
+        <div className="text-xs text-red-400 px-3 py-2 rounded-lg" style={{ background: '#1a0a0a', border: '1px solid #7f1d1d' }}>
+          {fetchError}
+        </div>
+      )}
+
+      {/* Live reserve display */}
+      {preview && (
+        <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${accent}33` }}>
+          <div className="px-3 py-2 text-xs font-semibold" style={{ background: accent + '18', color: accent, borderBottom: `1px solid ${accent}22` }}>
+            Current Pool Liquidity
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-[#1e1e30]">
+            <div className="px-4 py-3" style={{ background: '#0e0e1a', borderRight: '1px solid #1e1e30' }}>
+              <p className="text-xs text-slate-500 mb-1">Base Mint ({preview.baseMintSymbol})</p>
+              <p className="text-sm font-mono font-semibold text-white">{preview.baseMintAmount}</p>
+            </div>
+            <div className="px-4 py-3" style={{ background: '#0e0e1a' }}>
+              <p className="text-xs text-slate-500 mb-1">Quote Mint ({preview.quoteMintSymbol})</p>
+              <p className="text-sm font-mono font-semibold text-white">{preview.quoteMintAmount}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 divide-x" style={{ borderTop: '1px solid #1e1e30' }}>
+            <div className="px-4 py-2" style={{ background: '#0a0a16', borderRight: '1px solid #1e1e30' }}>
+              <p className="text-xs text-slate-500 mb-0.5">Unlocked Liquidity</p>
+              <p className="text-xs font-mono text-slate-300 break-all">{preview.unlockedLiquidity}</p>
+            </div>
+            <div className="px-4 py-2" style={{ background: '#0a0a16' }}>
+              <p className="text-xs text-slate-500 mb-0.5">Permanently Locked</p>
+              <p className="text-xs font-mono text-slate-300 break-all">{preview.permanentLockLiquidity}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BPS input — only shown once we have a preview */}
+      {preview && (
+        <div>
+          <label className="block text-xs font-medium text-slate-300 mb-1">Amount to Remove (BPS)</label>
+          <input
+            type="number"
+            placeholder="e.g. 1000"
+            value={bpsValue}
+            onChange={e => onBpsChange(e.target.value)}
+            min={1}
+            max={10000}
+            className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600"
+            style={{
+              background: '#161626',
+              border: `1px solid ${bpsValue && !bpsValid ? '#dc2626' : '#2a2a40'}`,
+            }}
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            100 = 1%&nbsp;&nbsp;|&nbsp;&nbsp;1000 = 10%&nbsp;&nbsp;|&nbsp;&nbsp;5000 = 50%&nbsp;&nbsp;|&nbsp;&nbsp;10000 = 100% of unlocked liquidity
+          </p>
+          {bpsValue && !bpsValid && (
+            <p className="mt-1 text-xs text-red-400">Must be between 1 and 10000.</p>
+          )}
+          {bpsValue && bpsValid && (
+            <p className="mt-1 text-xs font-semibold" style={{ color: accent }}>
+              Removing {(bpsNum / 100).toFixed(2)}% of unlocked liquidity
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Accordion Item ───────────────────────────────────────────────────────────
 
 function AccordionItem({
@@ -772,6 +969,25 @@ function AccordionItem({
           network: net,
         });
         data = { tx: r.tx, solscan: r.link };
+      } else if (fn.id === 'remove_all_liquidity') {
+        const r = await removeAllLiquidity(connection, anchorWallet!, {
+          poolAddress: values.pool_address,
+          tokenAAmountThreshold: values.token_a_amount_threshold || '0',
+          tokenBAmountThreshold: values.token_b_amount_threshold || '0',
+          network: net,
+        });
+        data = { tx: r.tx, solscan: r.link, ataTx: r.ataTx };
+      } else if (fn.id === 'remove_liquidity') {
+        const bps = Math.round(Number(values.bps));
+        if (!bps || bps < 1 || bps > 10000) {
+          throw new Error('BPS must be between 1 and 10000 (e.g. 1000 = 10%, 5000 = 50%).');
+        }
+        const r: RemoveLiquidityResult = await removeLiquidity(connection, anchorWallet!, {
+          poolAddress: values.pool_address,
+          bps,
+          network: net,
+        });
+        data = { tx: r.tx, solscan: r.link, ataTx: r.ataTx };
       }
 
       const solscanUrl =
@@ -876,8 +1092,17 @@ function AccordionItem({
           {/* Fields */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {fn.fields.map(field => (
-              <div key={field.name} className={field.type === 'textarea' || field.type === 'claimers' || field.type === 'claimers_live' ? 'sm:col-span-2' : ''}>
-                {field.type === 'claimers_live' ? (
+              <div key={field.name} className={field.type === 'textarea' || field.type === 'claimers' || field.type === 'claimers_live' || field.type === 'liquidity_bps' ? 'sm:col-span-2' : ''}>
+                {field.type === 'liquidity_bps' ? (
+                  <LiquidityBpsInput
+                    poolAddress={values.pool_address ?? ''}
+                    onPoolAddressChange={v => setValues(prev => ({ ...prev, pool_address: v }))}
+                    bpsValue={values.bps ?? ''}
+                    onBpsChange={v => setValues(prev => ({ ...prev, bps: v }))}
+                    accent={style.accent}
+                    connection={connection}
+                  />
+                ) : field.type === 'claimers_live' ? (
                   <ClaimersLiveInput
                     poolAddress={values.pool_address ?? ''}
                     value={values[field.name] ?? '[]'}

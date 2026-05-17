@@ -1298,6 +1298,180 @@ export async function adminSweepClaimer(
   return { tx: sig, link: solscanLink(sig, params.network), ataTx };
 }
 
+// ─── Admin: Remove All Liquidity ─────────────────────────────────────────────
+
+export async function removeAllLiquidity(
+  connection: Connection,
+  wallet: AnchorWallet,
+  params: {
+    poolAddress: string;
+    tokenAAmountThreshold: string;
+    tokenBAmountThreshold: string;
+    network: 'devnet' | 'mainnet';
+  },
+): Promise<{ tx: string; link: string; ataTx?: string }> {
+  const program = createProgram(wallet, connection);
+  const cpAmm = new CpAmm(connection);
+  const pool = new PublicKey(params.poolAddress);
+
+  const resolved = await resolveDammV2Position(connection, pool);
+  if (!resolved) {
+    throw new Error(`No vault-owned position found for DAMM v2 pool ${params.poolAddress}. Make sure the pool has migrated and the fee_claimer PDA holds the position NFT.`);
+  }
+  const { position, positionNftAccount } = resolved;
+
+  const poolState = await cpAmm.fetchPoolState(pool);
+  const tokenAProgram = getTokenProgram(poolState.tokenAFlag);
+  const tokenBProgram = getTokenProgram(poolState.tokenBFlag);
+  const poolAuthority = derivePoolAuthority();
+  const feeClaimerPda = deriveFeeClaimerPda();
+  const cpAmmEventAuthority = deriveCpAmmEventAuthority(DAMMV2_PROGRAM_ID);
+
+  // Ensure admin has ATAs for both tokens before removing liquidity
+  const tokenAAccount = getAssociatedTokenAddressSync(poolState.tokenAMint, wallet.publicKey, false, tokenAProgram);
+  const tokenBAccount = getAssociatedTokenAddressSync(poolState.tokenBMint, wallet.publicKey, false, tokenBProgram);
+
+  const createAtaIxs = [
+    createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, tokenAAccount, wallet.publicKey, poolState.tokenAMint, tokenAProgram),
+    createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, tokenBAccount, wallet.publicKey, poolState.tokenBMint, tokenBProgram),
+  ];
+
+  const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
+  const createAtaTx = new Transaction().add(...createAtaIxs);
+  addMemoToLegacyTransaction(createAtaTx, `remove-all-liquidity-create-atas:${pool.toBase58()}`, wallet.publicKey);
+  const ataTx = await provider.sendAndConfirm(createAtaTx);
+
+  const sig: string = await programMethods(program)
+    .removeAllLiquidity(
+      new BN(params.tokenAAmountThreshold || '0'),
+      new BN(params.tokenBAmountThreshold || '0'),
+    )
+    .accounts({
+      admin: wallet.publicKey,
+      poolAuthority,
+      pool,
+      position,
+      tokenAAccount,
+      tokenBAccount,
+      tokenAVault: poolState.tokenAVault,
+      tokenBVault: poolState.tokenBVault,
+      tokenAMint: poolState.tokenAMint,
+      tokenBMint: poolState.tokenBMint,
+      positionNftAccount,
+      feeClaimer: feeClaimerPda,
+      tokenAProgram,
+      tokenBProgram,
+      eventAuthority: cpAmmEventAuthority,
+      cpAmmProgram: DAMMV2_PROGRAM_ID,
+    })
+    .preInstructions([createMemoInstruction(`remove-all-liquidity:${pool.toBase58()}`, [wallet.publicKey])])
+    .rpc();
+
+  return { tx: sig, link: solscanLink(sig, params.network), ataTx };
+}
+
+// ─── Admin: Remove Liquidity (partial, BPS-based) ────────────────────────────
+
+export interface RemoveLiquidityResult {
+  tx: string;
+  link: string;
+  ataTx?: string;
+}
+
+export async function removeLiquidity(
+  connection: Connection,
+  wallet: AnchorWallet,
+  params: {
+    poolAddress: string;
+    bps: number;
+    network: 'devnet' | 'mainnet';
+  },
+): Promise<RemoveLiquidityResult> {
+  if (!Number.isInteger(params.bps) || params.bps < 1 || params.bps > 10000) {
+    throw new Error('BPS must be an integer between 1 and 10000 (100 = 1%, 5000 = 50%, 10000 = 100%).');
+  }
+
+  const program = createProgram(wallet, connection);
+  const cpAmm = new CpAmm(connection);
+  const pool = new PublicKey(params.poolAddress);
+
+  const resolved = await resolveDammV2Position(connection, pool);
+  if (!resolved) {
+    throw new Error(`No vault-owned position found for DAMM v2 pool ${params.poolAddress}. Make sure the pool has migrated and the fee_claimer PDA holds the position NFT.`);
+  }
+  const { position, positionNftAccount } = resolved;
+
+  const [poolState, positionState] = await Promise.all([
+    cpAmm.fetchPoolState(pool),
+    cpAmm.fetchPositionState(position),
+  ]);
+
+  const unlockedLiquidity: BN = positionState.unlockedLiquidity as unknown as BN;
+  if (unlockedLiquidity.isZero()) {
+    throw new Error('Position has no unlocked liquidity to remove. All liquidity may already be permanently locked.');
+  }
+
+  // Compute liquidityDelta = unlockedLiquidity * bps / 10000
+  const liquidityDelta = unlockedLiquidity.muln(params.bps).divn(10000);
+  if (liquidityDelta.isZero()) {
+    throw new Error('Computed liquidity delta is zero — the BPS percentage is too small for this position\'s liquidity amount.');
+  }
+
+  const tokenAProgram = getTokenProgram(poolState.tokenAFlag);
+  const tokenBProgram = getTokenProgram(poolState.tokenBFlag);
+
+  const poolAuthority = derivePoolAuthority();
+  const feeClaimerPda = deriveFeeClaimerPda();
+  const cpAmmEventAuthority = deriveCpAmmEventAuthority(DAMMV2_PROGRAM_ID);
+
+  // Ensure admin has ATAs for both tokens
+  const tokenAAccount = getAssociatedTokenAddressSync(poolState.tokenAMint, wallet.publicKey, false, tokenAProgram);
+  const tokenBAccount = getAssociatedTokenAddressSync(poolState.tokenBMint, wallet.publicKey, false, tokenBProgram);
+
+  const createAtaIxs = [
+    createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, tokenAAccount, wallet.publicKey, poolState.tokenAMint, tokenAProgram),
+    createAssociatedTokenAccountIdempotentInstruction(wallet.publicKey, tokenBAccount, wallet.publicKey, poolState.tokenBMint, tokenBProgram),
+  ];
+
+  const provider = new AnchorProvider(connection, wallet, AnchorProvider.defaultOptions());
+  const createAtaTx = new Transaction().add(...createAtaIxs);
+  addMemoToLegacyTransaction(createAtaTx, `remove-liquidity-create-atas:${pool.toBase58()}`, wallet.publicKey);
+  const ataTx = await provider.sendAndConfirm(createAtaTx);
+
+  const sig: string = await programMethods(program)
+    .removeLiquidity({
+      liquidityDelta,
+      tokenAAmountThreshold: new BN(0),
+      tokenBAmountThreshold: new BN(0),
+    })
+    .accounts({
+      admin: wallet.publicKey,
+      poolAuthority,
+      pool,
+      position,
+      tokenAAccount,
+      tokenBAccount,
+      tokenAVault: poolState.tokenAVault,
+      tokenBVault: poolState.tokenBVault,
+      tokenAMint: poolState.tokenAMint,
+      tokenBMint: poolState.tokenBMint,
+      positionNftAccount,
+      feeClaimer: feeClaimerPda,
+      tokenAProgram,
+      tokenBProgram,
+      eventAuthority: cpAmmEventAuthority,
+      cpAmmProgram: DAMMV2_PROGRAM_ID,
+    })
+    .preInstructions([createMemoInstruction(`remove-liquidity:${pool.toBase58()}:bps=${params.bps}`, [wallet.publicKey])])
+    .rpc();
+
+  return {
+    tx: sig,
+    link: solscanLink(sig, params.network),
+    ataTx,
+  };
+}
+
 // ─── Non-Admin: Claim DBC Partner Trading Fee ─────────────────────────────────
 
 export async function claimDbcPartnerFee(
