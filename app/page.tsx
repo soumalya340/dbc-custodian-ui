@@ -9,6 +9,7 @@ import {
   viewClaimerPoolInfo,
   viewFeeVaultBalances,
   viewVaultAllTokenInfo,
+  viewDammV2PoolInfo,
   initializePoolClaimers,
   updateClaimersBps,
   setClaimerEnabled,
@@ -88,6 +89,16 @@ const VIEW_FUNCTIONS: FunctionDef[] = [
       { name: 'claimer_address', label: 'Claimer Address', placeholder: 'Claimer wallet pubkey' },
     ],
     submitLabel: 'Fetch Claimer Pool Info',
+  },
+  {
+    id: 'view_dammv2_pool_info',
+    number: '1E',
+    title: 'DAMM v2 Pool Info',
+    description: 'Fetch live on-chain state for a DAMM v2 liquidity pool — price, reserves, fees, liquidity, positions, and token metadata.',
+    fields: [
+      { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
+    ],
+    submitLabel: 'Fetch Pool Info',
   },
 ];
 
@@ -651,6 +662,8 @@ function AccordionItem({
         data = await viewVaultAllTokenInfo(connection);
       } else if (fn.id === 'view_claimer_pool_info') {
         data = await viewClaimerPoolInfo(connection, values.pool_address, values.claimer_address);
+      } else if (fn.id === 'view_dammv2_pool_info') {
+        data = await viewDammV2PoolInfo(connection, values.pool_address);
       }
 
       // ── Non-Admin ──

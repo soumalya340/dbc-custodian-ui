@@ -33,6 +33,8 @@ import {
   derivePoolAuthority,
   getTokenProgram,
   getUnClaimLpFee,
+  getPriceFromSqrtPrice,
+  getTokenDecimals,
 } from '@meteora-ag/cp-amm-sdk';
 
 import { solscanLink } from './solscanLink';
@@ -963,6 +965,112 @@ export async function viewVaultAllTokenInfo(connection: Connection): Promise<{
   });
 
   return { vaultPubkey: vault.toBase58(), totalPositions: positions.length, positions };
+}
+
+// ─── View: DAMM v2 Pool Info ──────────────────────────────────────────────────
+
+export interface DammV2PoolInfo {
+  poolAddress: string;
+  status: string;
+  poolType: string;
+  collectFeeMode: string;
+  creator: string;
+  baseMint: {
+    mint: string;
+    vault: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    reserveAmount: string;
+    protocolFeeAccrued: string;
+    totalLpFeeAccrued: string;
+    totalProtocolFeeAccrued: string;
+  };
+  quoteMint: {
+    mint: string;
+    vault: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    reserveAmount: string;
+    protocolFeeAccrued: string;
+    totalLpFeeAccrued: string;
+    totalProtocolFeeAccrued: string;
+  };
+  price: string;
+  liquidity: string;
+  permanentLockLiquidity: string;
+  totalPositions: string;
+}
+
+export async function viewDammV2PoolInfo(
+  connection: Connection,
+  poolAddress: string,
+): Promise<DammV2PoolInfo> {
+  const cpAmm = new CpAmm(connection);
+  const pool = new PublicKey(poolAddress);
+  const poolState = await cpAmm.fetchPoolState(pool);
+
+  const tokenAProgram = getTokenProgram(poolState.tokenAFlag);
+  const tokenBProgram = getTokenProgram(poolState.tokenBFlag);
+
+  const [decimalsA, decimalsB, tokenAInfo, tokenBInfo] = await Promise.all([
+    getTokenDecimals(connection, poolState.tokenAMint, tokenAProgram),
+    getTokenDecimals(connection, poolState.tokenBMint, tokenBProgram),
+    getTokenDisplayInfo(connection, poolState.tokenAMint),
+    getTokenDisplayInfo(connection, poolState.tokenBMint),
+  ]);
+
+  const price = getPriceFromSqrtPrice(poolState.sqrtPrice, decimalsA, decimalsB);
+
+  const poolStatusMap: Record<number, string> = { 0: 'Enabled', 1: 'Disabled' };
+  const collectFeeModeMap: Record<number, string> = {
+    0: `Both (${tokenAInfo.symbol} + ${tokenBInfo.symbol})`,
+    1: `Quote Mint Only (${tokenBInfo.symbol})`,
+    2: `Compounding (${tokenBInfo.symbol})`,
+  };
+  const poolTypeMap: Record<number, string> = {
+    0: 'Concentrated Liquidity',
+    1: 'Compounding',
+  };
+  const toUiAmount = (raw: bigint | number | { toString(): string }, decimals: number) => {
+    const n = Number(raw.toString()) / Math.pow(10, decimals);
+    return n.toLocaleString('en-US', { maximumFractionDigits: decimals });
+  };
+
+  return {
+    poolAddress: pool.toBase58(),
+    status: poolStatusMap[poolState.poolStatus] ?? String(poolState.poolStatus),
+    poolType: poolTypeMap[poolState.poolType] ?? String(poolState.poolType),
+    collectFeeMode: collectFeeModeMap[poolState.collectFeeMode] ?? String(poolState.collectFeeMode),
+    creator: poolState.creator.toBase58(),
+    baseMint: {
+      mint: poolState.tokenAMint.toBase58(),
+      vault: poolState.tokenAVault.toBase58(),
+      symbol: tokenAInfo.symbol,
+      name: tokenAInfo.name,
+      decimals: decimalsA,
+      reserveAmount: toUiAmount(poolState.tokenAAmount, decimalsA),
+      protocolFeeAccrued: toUiAmount(poolState.protocolAFee, decimalsA),
+      totalLpFeeAccrued: toUiAmount(poolState.metrics.totalLpAFee, decimalsA),
+      totalProtocolFeeAccrued: toUiAmount(poolState.metrics.totalProtocolAFee, decimalsA),
+    },
+    quoteMint: {
+      mint: poolState.tokenBMint.toBase58(),
+      vault: poolState.tokenBVault.toBase58(),
+      symbol: tokenBInfo.symbol,
+      name: tokenBInfo.name,
+      decimals: decimalsB,
+      reserveAmount: toUiAmount(poolState.tokenBAmount, decimalsB),
+      protocolFeeAccrued: toUiAmount(poolState.protocolBFee, decimalsB),
+      totalLpFeeAccrued: toUiAmount(poolState.metrics.totalLpBFee, decimalsB),
+      totalProtocolFeeAccrued: toUiAmount(poolState.metrics.totalProtocolBFee, decimalsB),
+    },
+    price: `${price.toFixed(6)} ${tokenBInfo.symbol} per ${tokenAInfo.symbol}`,
+    liquidity: poolState.liquidity.toString(),
+    permanentLockLiquidity: poolState.permanentLockLiquidity.toString(),
+    totalPositions: poolState.metrics.totalPosition.toString(),
+  };
 }
 
 // ─── Admin: Initialize pool claimers ─────────────────────────────────────────
