@@ -1305,8 +1305,6 @@ export async function removeAllLiquidity(
   wallet: AnchorWallet,
   params: {
     poolAddress: string;
-    tokenAAmountThreshold: string;
-    tokenBAmountThreshold: string;
     network: 'devnet' | 'mainnet';
   },
 ): Promise<{ tx: string; link: string; ataTx?: string }> {
@@ -1320,7 +1318,15 @@ export async function removeAllLiquidity(
   }
   const { position, positionNftAccount } = resolved;
 
-  const poolState = await cpAmm.fetchPoolState(pool);
+  const [poolState, positionState] = await Promise.all([
+    cpAmm.fetchPoolState(pool),
+    cpAmm.fetchPositionState(position),
+  ]);
+
+  const unlockedLiquidity: BN = positionState.unlockedLiquidity as unknown as BN;
+  if (unlockedLiquidity.isZero()) {
+    throw new Error('Position has no unlocked liquidity to remove.');
+  }
   const tokenAProgram = getTokenProgram(poolState.tokenAFlag);
   const tokenBProgram = getTokenProgram(poolState.tokenBFlag);
   const poolAuthority = derivePoolAuthority();
@@ -1342,10 +1348,7 @@ export async function removeAllLiquidity(
   const ataTx = await provider.sendAndConfirm(createAtaTx);
 
   const sig: string = await programMethods(program)
-    .removeAllLiquidity(
-      new BN(params.tokenAAmountThreshold || '0'),
-      new BN(params.tokenBAmountThreshold || '0'),
-    )
+    .removeAllLiquidity(new BN(0), new BN(0))
     .accounts({
       admin: wallet.publicKey,
       poolAuthority,

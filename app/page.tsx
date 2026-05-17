@@ -280,23 +280,9 @@ const ADMIN_FUNCTIONS: FunctionDef[] = [
     number: '3E',
     title: 'Remove All Liquidity',
     description:
-      'Admin-only. Removes ALL unlocked liquidity from the vault-owned DAMM v2 position for a given pool. Withdrawn tokens are sent to the admin wallet\'s ATAs (created automatically). Permanently locked liquidity is not affected. Set thresholds to 0 to accept any amount (no slippage guard).',
+      'Admin-only. Removes ALL unlocked liquidity from the vault-owned DAMM v2 position for a given pool. Withdrawn tokens are sent to the admin wallet\'s ATAs (created automatically). Permanently locked liquidity is not affected.',
     fields: [
       { name: 'pool_address', label: 'DAMM v2 Pool Address', placeholder: 'DAMM v2 pool pubkey' },
-      {
-        name: 'token_a_amount_threshold',
-        label: 'Min Token A Out (0 = no slippage guard)',
-        type: 'number',
-        placeholder: '0',
-        hint: 'Raw token units. Set to 0 to accept any amount.',
-      },
-      {
-        name: 'token_b_amount_threshold',
-        label: 'Min Token B Out (0 = no slippage guard)',
-        type: 'number',
-        placeholder: '0',
-        hint: 'Raw token units. Set to 0 to accept any amount.',
-      },
     ],
     submitLabel: 'Remove All Liquidity',
   },
@@ -972,8 +958,6 @@ function AccordionItem({
       } else if (fn.id === 'remove_all_liquidity') {
         const r = await removeAllLiquidity(connection, anchorWallet!, {
           poolAddress: values.pool_address,
-          tokenAAmountThreshold: values.token_a_amount_threshold || '0',
-          tokenBAmountThreshold: values.token_b_amount_threshold || '0',
           network: net,
         });
         data = { tx: r.tx, solscan: r.link, ataTx: r.ataTx };
