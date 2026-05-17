@@ -616,7 +616,7 @@ function AccordionItem({
 }) {
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
-  const [result, setResult] = useState<{ type: 'info' | 'success' | 'error'; text: string; solscan?: string; altAddress?: string } | null>(null);
+  const [result, setResult] = useState<{ type: 'info' | 'success' | 'error'; text: string; solscan?: string; altAddress?: string; jupiterLink?: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
   const { connection } = useConnection();
@@ -670,6 +670,7 @@ function AccordionItem({
           configTxLink: r.configTxLink,
           poolTx: r.poolTx,
           solscan: r.poolTxLink,
+          jupiterLink: r.jupiterLink,
         };
       } else if (fn.id === 'claim_dbc_fee') {
         const r = await claimDbcPartnerFee(connection, anchorWallet!, {
@@ -768,11 +769,15 @@ function AccordionItem({
         data && typeof data === 'object' && 'altAddress' in data
           ? (data as { altAddress: string }).altAddress
           : undefined;
+      const jupiterLinkVal =
+        data && typeof data === 'object' && 'jupiterLink' in data
+          ? (data as { jupiterLink: string }).jupiterLink
+          : undefined;
       const displayData =
         data && typeof data === 'object'
-          ? { ...(data as object), solscan: undefined, altAddress: undefined }
+          ? { ...(data as object), solscan: undefined, altAddress: undefined, jupiterLink: undefined }
           : data;
-      setResult({ type: 'success', text: formatResult(displayData), solscan: solscanUrl, altAddress: altAddressVal });
+      setResult({ type: 'success', text: formatResult(displayData), solscan: solscanUrl, altAddress: altAddressVal, jupiterLink: jupiterLinkVal });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const isRejection =
@@ -961,17 +966,30 @@ function AccordionItem({
                   </div>
                 </div>
               )}
-              {result.solscan && (
-                <div className="mt-2 pt-2" style={{ borderTop: '1px solid #14532d' }}>
-                  <a
-                    href={result.solscan}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline"
-                    style={{ color: '#4ade80' }}
-                  >
-                    View on Solscan ↗
-                  </a>
+              {(result.solscan || result.jupiterLink) && (
+                <div className="mt-2 pt-2 flex flex-wrap gap-4" style={{ borderTop: '1px solid #14532d' }}>
+                  {result.solscan && (
+                    <a
+                      href={result.solscan}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                      style={{ color: '#4ade80' }}
+                    >
+                      View on Solscan ↗
+                    </a>
+                  )}
+                  {result.jupiterLink && (
+                    <a
+                      href={result.jupiterLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                      style={{ color: '#4ade80' }}
+                    >
+                      View on Jupiter ↗
+                    </a>
+                  )}
                 </div>
               )}
             </div>

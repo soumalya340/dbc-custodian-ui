@@ -46,6 +46,7 @@ export async function createConfigAndPool(
   configAddress: string;
   poolAddress: string;
   baseMint: string;
+  jupiterLink: string;
 }> {
   const { migrationQuoteThreshold, name, symbol, uri, network } = params;
 
@@ -200,6 +201,7 @@ export async function createConfigAndPool(
 
   const poolAddress = deriveDbcPoolAddress(quoteMint, baseMint.publicKey, config.publicKey);
 
+  const baseMintAddress = baseMint.publicKey.toBase58();
   return {
     configTx: configSignature,
     configTxLink: solscanLink(configSignature, network),
@@ -207,6 +209,7 @@ export async function createConfigAndPool(
     poolTxLink: solscanLink(signature, network),
     configAddress: config.publicKey.toBase58(),
     poolAddress: poolAddress.toBase58(),
-    baseMint: baseMint.publicKey.toBase58(),
+    baseMint: baseMintAddress,
+    jupiterLink: `https://jup.ag/tokens/${baseMintAddress}`,
   };
 }

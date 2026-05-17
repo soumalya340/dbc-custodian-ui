@@ -36,12 +36,20 @@ import {
 } from '@meteora-ag/cp-amm-sdk';
 
 import { solscanLink } from './solscanLink';
+import dbcSwapIdl from '@/idl/dbc_swap.json';
 
 // ─── Program IDs ─────────────────────────────────────────────────────────────
 
 const MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID = new PublicKey(
-  '2VgCjezWK4kHxoute1Jy986AXVPvSkwquPX5VBVwQMzV',
+  'WJH1JBQikS6PuZbG7HZXnsAGVVdVY4VqbuawAy9Ht3t',
 );
+// Sanity check: constant must match the IDL address at startup.
+if (MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID.toBase58() !== dbcSwapIdl.address) {
+  throw new Error(
+    `Program ID mismatch: code has ${MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID.toBase58()} but idl/dbc_swap.json has ${dbcSwapIdl.address}`,
+  );
+}
+
 const DBC_PROGRAM_ID = new PublicKey(
   'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN',
 );
