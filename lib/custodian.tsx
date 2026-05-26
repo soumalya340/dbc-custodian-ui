@@ -43,7 +43,7 @@ import dbcSwapIdl from '@/idl/dbc_swap.json';
 // ─── Program IDs ─────────────────────────────────────────────────────────────
 
 const MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID = new PublicKey(
-  'WJH1JBQikS6PuZbG7HZXnsAGVVdVY4VqbuawAy9Ht3t',
+  'GSsHjA5zWnEpczB5Nf2W11uAh8ZLS8zuATEDTEcyuzGH',
 );
 // Sanity check: constant must match the IDL address at startup.
 if (MY_CUSTODIAN_SMART_CONTRACT_PROGRAM_ID.toBase58() !== dbcSwapIdl.address) {
