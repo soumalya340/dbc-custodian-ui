@@ -1,5 +1,5 @@
 {
-  "address": "WJH1JBQikS6PuZbG7HZXnsAGVVdVY4VqbuawAy9Ht3t",
+  "address": "GSsHjA5zWnEpczB5Nf2W11uAh8ZLS8zuATEDTEcyuzGH",
   "metadata": {
     "name": "dbc_swap",
     "version": "0.1.0",
@@ -23,12 +23,21 @@
         "Admin-only — transfers `pending_base` / `pending_quote` from fee vaults to",
         "the supplied destination ATAs (e.g. after a claimer was disabled)."
       ],
-      "discriminator": [162, 31, 38, 141, 130, 238, 160, 127],
+      "discriminator": [
+        162,
+        31,
+        38,
+        141,
+        130,
+        238,
+        160,
+        127
+      ],
       "accounts": [
         {
           "name": "admin",
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "9DnmqbswvtAyGfoNwWFCxGGArpEuw2L3qkEXgzALawCt"
         },
         {
           "name": "pool"
@@ -43,7 +52,19 @@
               {
                 "kind": "const",
                 "value": [
-                  99, 108, 97, 105, 109, 101, 114, 95, 115, 116, 97, 116, 101
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
                 ]
               },
               {
@@ -65,8 +86,26 @@
               {
                 "kind": "const",
                 "value": [
-                  99, 108, 97, 105, 109, 101, 114, 95, 112, 101, 110, 100, 105,
-                  110, 103, 95, 98, 97, 115, 101
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  95,
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  98,
+                  97,
+                  115,
+                  101
                 ]
               },
               {
@@ -88,8 +127,27 @@
               {
                 "kind": "const",
                 "value": [
-                  99, 108, 97, 105, 109, 101, 114, 95, 112, 101, 110, 100, 105,
-                  110, 103, 95, 113, 117, 111, 116, 101
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  95,
+                  112,
+                  101,
+                  110,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  113,
+                  117,
+                  111,
+                  116,
+                  101
                 ]
               },
               {
@@ -136,7 +194,16 @@
         "* `max_amount_a` - Maximum base token amount to claim",
         "* `max_amount_b` - Maximum quote token amount to claim"
       ],
-      "discriminator": [123, 126, 241, 171, 152, 241, 18, 123],
+      "discriminator": [
+        123,
+        126,
+        241,
+        171,
+        152,
+        241,
+        18,
+        123
+      ],
       "accounts": [
         {
           "name": "pool_authority"
@@ -159,7 +226,19 @@
               {
                 "kind": "const",
                 "value": [
-                  112, 111, 111, 108, 95, 99, 108, 97, 105, 109, 101, 114, 115
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
                 ]
               },
               {
@@ -180,7 +259,17 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -203,7 +292,17 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -241,7 +340,19 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 99, 108, 97, 105, 109, 101, 114]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
               }
             ]
           }
@@ -261,7 +372,9 @@
         },
         {
           "name": "payer",
-          "docs": ["Pays rent for vault account creation on the first call."],
+          "docs": [
+            "Pays rent for vault account creation on the first call."
+          ],
           "writable": true,
           "signer": true
         },
@@ -288,7 +401,16 @@
         "PDA-owned fee vaults. All registered claimers can then withdraw",
         "their BPS shares via `withdraw_from_fee_vault`."
       ],
-      "discriminator": [180, 38, 154, 17, 133, 33, 162, 211],
+      "discriminator": [
+        180,
+        38,
+        154,
+        17,
+        133,
+        33,
+        162,
+        211
+      ],
       "accounts": [
         {
           "name": "pool_authority"
@@ -307,7 +429,19 @@
               {
                 "kind": "const",
                 "value": [
-                  112, 111, 111, 108, 95, 99, 108, 97, 105, 109, 101, 114, 115
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
                 ]
               },
               {
@@ -323,13 +457,25 @@
         },
         {
           "name": "base_fee_vault",
-          "docs": ["Per-pool PDA-owned vault that accumulates token A fees."],
+          "docs": [
+            "Per-pool PDA-owned vault that accumulates token A fees."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -344,13 +490,25 @@
         },
         {
           "name": "quote_fee_vault",
-          "docs": ["Per-pool PDA-owned vault that accumulates token B fees."],
+          "docs": [
+            "Per-pool PDA-owned vault that accumulates token B fees."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -395,7 +553,9 @@
         },
         {
           "name": "payer",
-          "docs": ["Pays rent for vault account creation on the first call."],
+          "docs": [
+            "Pays rent for vault account creation on the first call."
+          ],
           "writable": true,
           "signer": true
         },
@@ -409,7 +569,19 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 99, 108, 97, 105, 109, 101, 114]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
               }
             ]
           }
@@ -429,7 +601,16 @@
         "Designed for the DAMM v2 path. Remaining accounts must be passed as",
         "[claimer_0_base_ata, claimer_0_quote_ata, claimer_1_base_ata, ...]."
       ],
-      "discriminator": [120, 56, 27, 7, 53, 176, 113, 186],
+      "discriminator": [
+        120,
+        56,
+        27,
+        7,
+        53,
+        176,
+        113,
+        186
+      ],
       "accounts": [
         {
           "name": "caller",
@@ -446,7 +627,19 @@
               {
                 "kind": "const",
                 "value": [
-                  112, 111, 111, 108, 95, 99, 108, 97, 105, 109, 101, 114, 115
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
                 ]
               },
               {
@@ -463,7 +656,17 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -483,7 +686,17 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -508,7 +721,19 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 99, 108, 97, 105, 109, 101, 114]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
               }
             ]
           }
@@ -530,13 +755,22 @@
         "Resets all claimed amounts to zero on each call.",
         "`pool_state` must be `Dbc` or `DammV2` — determines which fee path applies."
       ],
-      "discriminator": [236, 20, 205, 120, 203, 193, 137, 151],
+      "discriminator": [
+        236,
+        20,
+        205,
+        120,
+        203,
+        193,
+        137,
+        151
+      ],
       "accounts": [
         {
           "name": "deployer",
           "writable": true,
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "9DnmqbswvtAyGfoNwWFCxGGArpEuw2L3qkEXgzALawCt"
         },
         {
           "name": "pool"
@@ -555,7 +789,19 @@
               {
                 "kind": "const",
                 "value": [
-                  112, 111, 111, 108, 95, 99, 108, 97, 105, 109, 101, 114, 115
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
                 ]
               },
               {
@@ -604,12 +850,21 @@
       "docs": [
         "Admin-only — removes ALL liquidity from a cp_amm pool position."
       ],
-      "discriminator": [10, 51, 61, 35, 112, 105, 24, 85],
+      "discriminator": [
+        10,
+        51,
+        61,
+        35,
+        112,
+        105,
+        24,
+        85
+      ],
       "accounts": [
         {
           "name": "admin",
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "3xB8e9crd2HsoJS6NJhjPe6MDKShgYu3oxJJUgYQnGAB"
         },
         {
           "name": "pool_authority"
@@ -624,12 +879,16 @@
         },
         {
           "name": "token_a_account",
-          "docs": ["Admin's token A account — withdrawn liquidity goes here"],
+          "docs": [
+            "Admin's token A account — withdrawn liquidity goes here"
+          ],
           "writable": true
         },
         {
           "name": "token_b_account",
-          "docs": ["Admin's token B account — withdrawn liquidity goes here"],
+          "docs": [
+            "Admin's token B account — withdrawn liquidity goes here"
+          ],
           "writable": true
         },
         {
@@ -651,12 +910,26 @@
         },
         {
           "name": "fee_claimer",
-          "docs": ["PDA signer — acts as the position owner for the CPI"],
+          "docs": [
+            "PDA signer — acts as the position owner for the CPI"
+          ],
           "pda": {
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 99, 108, 97, 105, 109, 101, 114]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
               }
             ]
           }
@@ -688,13 +961,24 @@
     },
     {
       "name": "remove_liquidity",
-      "docs": ["Admin-only — removes liquidity from a cp_amm pool position."],
-      "discriminator": [80, 85, 209, 72, 24, 206, 177, 108],
+      "docs": [
+        "Admin-only — removes liquidity from a cp_amm pool position."
+      ],
+      "discriminator": [
+        80,
+        85,
+        209,
+        72,
+        24,
+        206,
+        177,
+        108
+      ],
       "accounts": [
         {
           "name": "admin",
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "3xB8e9crd2HsoJS6NJhjPe6MDKShgYu3oxJJUgYQnGAB"
         },
         {
           "name": "pool_authority"
@@ -709,12 +993,16 @@
         },
         {
           "name": "token_a_account",
-          "docs": ["Admin's token A account — withdrawn liquidity goes here"],
+          "docs": [
+            "Admin's token A account — withdrawn liquidity goes here"
+          ],
           "writable": true
         },
         {
           "name": "token_b_account",
-          "docs": ["Admin's token B account — withdrawn liquidity goes here"],
+          "docs": [
+            "Admin's token B account — withdrawn liquidity goes here"
+          ],
           "writable": true
         },
         {
@@ -736,12 +1024,26 @@
         },
         {
           "name": "fee_claimer",
-          "docs": ["PDA signer — acts as the position owner for the CPI"],
+          "docs": [
+            "PDA signer — acts as the position owner for the CPI"
+          ],
           "pda": {
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 101, 101, 95, 99, 108, 97, 105, 109, 101, 114]
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114
+                ]
               }
             ]
           }
@@ -776,12 +1078,21 @@
       "docs": [
         "Admin-only — enables or disables a claimer for live `distribute_fees` payouts."
       ],
-      "discriminator": [217, 9, 250, 243, 164, 119, 102, 83],
+      "discriminator": [
+        217,
+        9,
+        250,
+        243,
+        164,
+        119,
+        102,
+        83
+      ],
       "accounts": [
         {
           "name": "admin",
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "9DnmqbswvtAyGfoNwWFCxGGArpEuw2L3qkEXgzALawCt"
         },
         {
           "name": "pool"
@@ -797,7 +1108,19 @@
               {
                 "kind": "const",
                 "value": [
-                  99, 108, 97, 105, 109, 101, 114, 95, 115, 116, 97, 116, 101
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
                 ]
               },
               {
@@ -826,13 +1149,22 @@
         "for a pool. Claimer addresses and all claimed amount history are preserved.",
         "Use this to rebalance fee splits without disturbing historical records."
       ],
-      "discriminator": [102, 214, 197, 251, 60, 218, 99, 110],
+      "discriminator": [
+        102,
+        214,
+        197,
+        251,
+        60,
+        218,
+        99,
+        110
+      ],
       "accounts": [
         {
           "name": "deployer",
           "writable": true,
           "signer": true,
-          "address": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
+          "address": "9DnmqbswvtAyGfoNwWFCxGGArpEuw2L3qkEXgzALawCt"
         },
         {
           "name": "pool"
@@ -849,7 +1181,19 @@
               {
                 "kind": "const",
                 "value": [
-                  112, 111, 111, 108, 95, 99, 108, 97, 105, 109, 101, 114, 115
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  108,
+                  97,
+                  105,
+                  109,
+                  101,
+                  114,
+                  115
                 ]
               },
               {
@@ -873,45 +1217,135 @@
   "accounts": [
     {
       "name": "ClaimerState",
-      "discriminator": [210, 163, 0, 152, 127, 111, 40, 199]
+      "discriminator": [
+        210,
+        163,
+        0,
+        152,
+        127,
+        111,
+        40,
+        199
+      ]
     },
     {
       "name": "PoolClaimers",
-      "discriminator": [60, 146, 188, 214, 218, 48, 211, 80]
+      "discriminator": [
+        60,
+        146,
+        188,
+        214,
+        218,
+        48,
+        211,
+        80
+      ]
     }
   ],
   "events": [
     {
       "name": "AllLiquidityRemoved",
-      "discriminator": [200, 235, 69, 152, 117, 67, 205, 26]
+      "discriminator": [
+        200,
+        235,
+        69,
+        152,
+        117,
+        67,
+        205,
+        26
+      ]
     },
     {
       "name": "ClaimersBpsUpdated",
-      "discriminator": [79, 145, 116, 144, 236, 123, 159, 248]
+      "discriminator": [
+        79,
+        145,
+        116,
+        144,
+        236,
+        123,
+        159,
+        248
+      ]
     },
     {
       "name": "FeesDistributedDammV2",
-      "discriminator": [76, 203, 175, 112, 24, 112, 14, 130]
+      "discriminator": [
+        76,
+        203,
+        175,
+        112,
+        24,
+        112,
+        14,
+        130
+      ]
     },
     {
       "name": "FeesDistributedDbc",
-      "discriminator": [95, 34, 237, 184, 142, 74, 201, 150]
+      "discriminator": [
+        95,
+        34,
+        237,
+        184,
+        142,
+        74,
+        201,
+        150
+      ]
     },
     {
       "name": "LiquidityRemoved",
-      "discriminator": [225, 105, 216, 39, 124, 116, 169, 189]
+      "discriminator": [
+        225,
+        105,
+        216,
+        39,
+        124,
+        116,
+        169,
+        189
+      ]
     },
     {
       "name": "PartnerFeesClaimed",
-      "discriminator": [142, 68, 1, 218, 57, 124, 50, 112]
+      "discriminator": [
+        142,
+        68,
+        1,
+        218,
+        57,
+        124,
+        50,
+        112
+      ]
     },
     {
       "name": "PoolClaimersSet",
-      "discriminator": [191, 125, 13, 9, 139, 190, 234, 7]
+      "discriminator": [
+        191,
+        125,
+        13,
+        9,
+        139,
+        190,
+        234,
+        7
+      ]
     },
     {
       "name": "PositionFeeClaimed",
-      "discriminator": [19, 216, 6, 218, 101, 90, 226, 3]
+      "discriminator": [
+        19,
+        216,
+        6,
+        218,
+        101,
+        90,
+        226,
+        3
+      ]
     }
   ],
   "errors": [
@@ -969,7 +1403,9 @@
   "types": [
     {
       "name": "AllLiquidityRemoved",
-      "docs": ["Emitted when all liquidity is removed from a cp_amm position."],
+      "docs": [
+        "Emitted when all liquidity is removed from a cp_amm position."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1301,18 +1737,6 @@
           }
         ]
       }
-    }
-  ],
-  "constants": [
-    {
-      "name": "ADMIN_ADDRESS",
-      "type": "pubkey",
-      "value": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
-    },
-    {
-      "name": "LIQUIDITY_REMOVAL_AUTHORITY",
-      "type": "pubkey",
-      "value": "cyaibXfQvCC4qKDYNguU4mXryhKjSkszPWkd56KFkrF"
     }
   ]
 }
